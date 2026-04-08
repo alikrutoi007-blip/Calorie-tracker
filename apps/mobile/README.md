@@ -31,3 +31,27 @@ Fill these env values before testing cloud or subscriptions:
 - run `npx expo prebuild` from this folder, not from the repo parent
 - on Windows use `eas build -p ios --profile preview` instead of `expo run:ios`
 - add App Store Connect products and RevenueCat offerings
+
+### EAS build flow
+
+For the first installable iPhone build on Windows:
+
+```bash
+npm run eas:login
+npm run eas:configure
+npm run ios:cloud
+```
+
+Build profiles:
+
+- `npm run ios:dev`
+  Creates a development client build.
+- `npm run ios:cloud`
+  Creates an internal preview build without requiring `expo-dev-client`.
+- `npm run ios:store`
+  Creates the future App Store build.
+
+### Apple account note
+
+`EAS Build` for iOS needs an Apple account that is enrolled in the Apple Developer Program.
+Without that membership, cloud iOS signing and TestFlight/App Store delivery will fail even if Expo login succeeds.

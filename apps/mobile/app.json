@@ -1,5 +1,6 @@
 {
   "expo": {
+    "owner": "skyfall98",
     "name": "Momentum",
     "slug": "momentum-mobile",
     "scheme": "momentum",
@@ -34,7 +35,8 @@
         "NSMicrophoneUsageDescription": "Momentum uses the microphone so you can describe meals naturally while logging food.",
         "NSHealthShareUsageDescription": "Momentum can read sleep and nutrition data to keep your daily rhythm in sync.",
         "NSHealthUpdateUsageDescription": "Momentum can write selected wellness data back to Health when you confirm it.",
-        "NSUserNotificationsUsageDescription": "Momentum uses notifications for gentle morning and evening check-ins."
+        "NSUserNotificationsUsageDescription": "Momentum uses notifications for gentle morning and evening check-ins.",
+        "ITSAppUsesNonExemptEncryption": false
       },
       "entitlements": {
         "com.apple.developer.healthkit": true,
@@ -45,10 +47,18 @@
       "projectStage": "native-scaffold",
       "supabaseUrl": "",
       "supabasePublishableKey": "",
-      "revenueCatApiKeyIos": ""
+      "revenueCatApiKeyIos": "",
+      "eas": {
+        "projectId": "77fb805a-008f-493d-b580-9270c9288923"
+      }
     },
     "android": {
-      "package": "com.momentum.mobile"
+      "package": "com.momentum.mobile",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     }
   }
 }

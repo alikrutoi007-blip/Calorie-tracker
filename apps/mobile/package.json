@@ -6,8 +6,12 @@
   "scripts": {
     "start": "expo start --clear",
     "prebuild": "expo prebuild",
+    "eas:login": "npx eas-cli@latest login",
+    "eas:configure": "npx eas-cli@latest build:configure",
+    "ios:dev": "npx eas-cli@latest build -p ios --profile development",
     "ios": "expo run:ios",
-    "ios:cloud": "eas build -p ios --profile preview",
+    "ios:cloud": "npx eas-cli@latest build -p ios --profile preview",
+    "ios:store": "npx eas-cli@latest build -p ios --profile production",
     "android": "expo run:android",
     "web": "expo start --web"
   },
@@ -19,6 +23,7 @@
     "expo-audio": "~1.0.13",
     "expo-camera": "~17.0.9",
     "expo-constants": "~18.0.10",
+    "expo-dev-client": "~6.0.20",
     "expo-device": "~8.0.9",
     "expo-notifications": "~0.32.12",
     "expo-status-bar": "~3.0.8",
