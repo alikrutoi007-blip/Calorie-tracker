@@ -24,6 +24,14 @@
     linear-gradient(180deg, #fff8f2 0%, #fbf8f4 48%, #f7f3ee 100%);
 }
 
+.app-shell.is-reduced-motion *,
+.app-shell.is-reduced-motion *::before,
+.app-shell.is-reduced-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
 .app-frame {
   width: 100%;
   max-width: 430px;
@@ -60,6 +68,20 @@
   margin-bottom: 18px;
 }
 
+.app-global-bar {
+  padding: 8px 2px 2px;
+}
+
+.global-title {
+  min-width: 0;
+}
+
+.global-title p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .brand-block {
   align-items: center;
   gap: 12px;
@@ -80,6 +102,61 @@
   color: white;
   font-weight: 800;
   box-shadow: 0 18px 32px rgba(239, 106, 46, 0.2);
+}
+
+.avatar-badge.is-small {
+  width: 38px;
+  height: 38px;
+  border-radius: 14px;
+  box-shadow: 0 12px 24px rgba(239, 106, 46, 0.16);
+}
+
+.profile-launch,
+.profile-launch-trailing,
+.state-card,
+.state-card-actions,
+.profile-sheet-summary,
+.profile-sheet-actions,
+.setting-row {
+  display: flex;
+}
+
+.profile-launch {
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(124, 106, 91, 0.08);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 14px 28px rgba(95, 67, 45, 0.08);
+  cursor: pointer;
+}
+
+.profile-launch-copy {
+  min-width: 0;
+  text-align: right;
+}
+
+.profile-launch-copy span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.profile-launch-copy strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 0.96rem;
+  overflow-wrap: anywhere;
+}
+
+.profile-launch-trailing {
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
 }
 
 .eyebrow,
@@ -246,6 +323,10 @@
 
 .section-head h2 {
   font-size: 1.28rem;
+}
+
+.profile-sheet-headline {
+  margin-bottom: 10px;
 }
 
 .metric-pill,
@@ -613,6 +694,66 @@
 
 .empty-card.compact {
   width: 100%;
+}
+
+.state-card {
+  gap: 14px;
+  align-items: flex-start;
+  padding: 16px;
+  border-radius: 24px;
+  border: 1px solid rgba(124, 106, 91, 0.1);
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.state-card.is-compact {
+  padding: 14px;
+}
+
+.state-card.is-warm {
+  background: linear-gradient(180deg, rgba(255, 248, 240, 0.94), rgba(255, 255, 255, 0.82));
+}
+
+.state-card.is-success {
+  background: linear-gradient(180deg, rgba(240, 255, 248, 0.92), rgba(255, 255, 255, 0.84));
+}
+
+.state-card.is-loading {
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.74), rgba(255, 248, 241, 0.98), rgba(255, 255, 255, 0.74));
+  background-size: 180% 100%;
+  animation: shimmer-slide 1.8s linear infinite;
+}
+
+.state-card-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 16px;
+  background: rgba(239, 106, 46, 0.1);
+  color: var(--accent);
+}
+
+.state-card-copy {
+  min-width: 0;
+}
+
+.state-card-copy strong {
+  display: block;
+  margin-top: 6px;
+  font-size: 1rem;
+}
+
+.state-card-copy p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.state-card-actions {
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 12px;
 }
 
 .calorie-hero {
@@ -984,6 +1125,119 @@
 .password-panel-head {
   justify-content: space-between;
   align-items: flex-start;
+}
+
+.profile-sheet {
+  display: grid;
+  gap: 14px;
+}
+
+.profile-sheet-summary,
+.profile-sheet-actions {
+  gap: 12px;
+}
+
+.profile-sheet-summary {
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 16px;
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(124, 106, 91, 0.08);
+}
+
+.profile-sheet-summary strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.profile-sheet-summary p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.profile-sheet-actions {
+  flex-wrap: wrap;
+}
+
+.profile-sheet-actions.is-secondary {
+  margin-top: 2px;
+}
+
+.profile-sheet-section {
+  display: grid;
+  gap: 10px;
+}
+
+.settings-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.setting-row {
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  padding: 14px;
+  border-radius: 22px;
+  border: 1px solid rgba(124, 106, 91, 0.08);
+  background: rgba(255, 255, 255, 0.72);
+  text-align: left;
+  cursor: pointer;
+}
+
+.setting-row.is-active {
+  border-color: rgba(239, 106, 46, 0.2);
+  background: linear-gradient(180deg, rgba(255, 247, 241, 0.94), rgba(255, 255, 255, 0.84));
+}
+
+.setting-row.is-disabled {
+  opacity: 0.6;
+}
+
+.setting-copy {
+  min-width: 0;
+}
+
+.setting-copy strong {
+  display: block;
+}
+
+.setting-copy p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.toggle-pill {
+  display: inline-flex;
+  align-items: center;
+  width: 50px;
+  height: 30px;
+  padding: 4px;
+  border-radius: 999px;
+  background: rgba(124, 106, 91, 0.14);
+  flex-shrink: 0;
+  transition: background 180ms ease;
+}
+
+.toggle-pill.is-active {
+  background: rgba(239, 106, 46, 0.22);
+}
+
+.toggle-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 8px 16px rgba(95, 67, 45, 0.14);
+  transition: transform 180ms ease;
+}
+
+.toggle-pill.is-active .toggle-thumb {
+  transform: translateX(20px);
 }
 
 .meal-thumb {
@@ -1397,6 +1651,16 @@ button:disabled {
   }
 }
 
+@keyframes shimmer-slide {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -20% 0;
+  }
+}
+
 @media (max-width: 390px) {
   .app-frame {
     padding-inline: 12px;
@@ -1440,6 +1704,10 @@ button:disabled {
   .analysis-head,
   .sync-actions,
   .auth-link-row,
+  .profile-launch,
+  .profile-sheet-summary,
+  .profile-sheet-actions,
+  .setting-row,
   .meal-card,
   .account-summary-card,
   .recovery-card,

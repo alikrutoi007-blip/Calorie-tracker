@@ -63,6 +63,48 @@ const CALORIE_CAPTURE_MODES = [
   },
 ];
 
+const APP_SETTINGS = [
+  {
+    section: 'app',
+    key: 'habitCelebrations',
+    label: 'Habit celebrations',
+    description: 'Keep sparks and little completion rewards visible.',
+  },
+  {
+    section: 'app',
+    key: 'reduceMotion',
+    label: 'Reduce motion',
+    description: 'Tone down animation for a calmer iPhone feel.',
+  },
+  {
+    section: 'app',
+    key: 'dailyNudges',
+    label: 'Daily nudges',
+    description: 'Keep the interface gently encouraging instead of silent.',
+  },
+];
+
+const EMAIL_SETTINGS = [
+  {
+    section: 'email',
+    key: 'securityAlerts',
+    label: 'Security alerts',
+    description: 'Keep password and recovery activity emails enabled.',
+  },
+  {
+    section: 'email',
+    key: 'weeklyDigest',
+    label: 'Weekly digest',
+    description: 'Receive a soft weekly recap of streaks and rhythm.',
+  },
+  {
+    section: 'email',
+    key: 'productUpdates',
+    label: 'Product updates',
+    description: 'Hear about new features only when they are ready.',
+  },
+];
+
 const PARTICLES = Array.from({ length: 10 }, (_, index) => index);
 
 function uid() {
@@ -186,13 +228,58 @@ function getGreeting() {
   return 'Good evening';
 }
 
+function createDefaultPreferences() {
+  return {
+    app: {
+      habitCelebrations: true,
+      reduceMotion: false,
+      dailyNudges: true,
+    },
+    email: {
+      securityAlerts: true,
+      weeklyDigest: true,
+      productUpdates: false,
+    },
+  };
+}
+
 function createDefaultState() {
   return {
     profile: { name: '', intention: '', onboardingComplete: false },
+    preferences: createDefaultPreferences(),
     habits: [],
     calories: { target: DEFAULT_CALORIE_TARGET, entries: {} },
     sleep: { target: DEFAULT_SLEEP_TARGET, entries: {} },
     journal: [],
+  };
+}
+
+function normalizePreferences(preferences) {
+  const fallback = createDefaultPreferences();
+
+  return {
+    app: {
+      habitCelebrations: typeof preferences?.app?.habitCelebrations === 'boolean'
+        ? preferences.app.habitCelebrations
+        : fallback.app.habitCelebrations,
+      reduceMotion: typeof preferences?.app?.reduceMotion === 'boolean'
+        ? preferences.app.reduceMotion
+        : fallback.app.reduceMotion,
+      dailyNudges: typeof preferences?.app?.dailyNudges === 'boolean'
+        ? preferences.app.dailyNudges
+        : fallback.app.dailyNudges,
+    },
+    email: {
+      securityAlerts: typeof preferences?.email?.securityAlerts === 'boolean'
+        ? preferences.email.securityAlerts
+        : fallback.email.securityAlerts,
+      weeklyDigest: typeof preferences?.email?.weeklyDigest === 'boolean'
+        ? preferences.email.weeklyDigest
+        : fallback.email.weeklyDigest,
+      productUpdates: typeof preferences?.email?.productUpdates === 'boolean'
+        ? preferences.email.productUpdates
+        : fallback.email.productUpdates,
+    },
   };
 }
 
@@ -253,6 +340,7 @@ function normalizeState(parsed) {
         ? parsed.profile.onboardingComplete
         : Boolean(hasData),
     },
+    preferences: normalizePreferences(parsed?.preferences),
     habits,
     calories: { target: Number(parsed?.calories?.target) || DEFAULT_CALORIE_TARGET, entries: calorieEntries },
     sleep: {
@@ -550,6 +638,214 @@ function OnboardingOverlay({ draft, selectedPresets, onFieldChange, onTogglePres
   );
 }
 
+function StateCard({
+  tone = 'neutral',
+  icon = 'info',
+  eyebrow,
+  title,
+  body,
+  actionLabel,
+  onAction,
+  actionDisabled = false,
+  secondaryActionLabel,
+  onSecondaryAction,
+  secondaryActionDisabled = false,
+  compact = false,
+}) {
+  return (
+    <div className={['state-card', `is-${tone}`, compact ? 'is-compact' : ''].filter(Boolean).join(' ')}>
+      <div className="state-card-icon" aria-hidden="true">
+        <span className="material-symbols-outlined">{icon}</span>
+      </div>
+
+      <div className="state-card-copy">
+        {eyebrow ? <span className="eyebrow">{eyebrow}</span> : null}
+        <strong>{title}</strong>
+        <p>{body}</p>
+
+        {actionLabel || secondaryActionLabel ? (
+          <div className="state-card-actions">
+            {actionLabel ? (
+              <button type="button" className="ghost-button" onClick={onAction} disabled={actionDisabled}>
+                {actionLabel}
+              </button>
+            ) : null}
+
+            {secondaryActionLabel ? (
+              <button type="button" className="text-link-button" onClick={onSecondaryAction} disabled={secondaryActionDisabled}>
+                {secondaryActionLabel}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function SettingToggle({ label, description, checked, disabled = false, onToggle }) {
+  return (
+    <button
+      type="button"
+      className={['setting-row', checked ? 'is-active' : '', disabled ? 'is-disabled' : ''].filter(Boolean).join(' ')}
+      onClick={onToggle}
+      disabled={disabled}
+    >
+      <div className="setting-copy">
+        <strong>{label}</strong>
+        <p>{description}</p>
+      </div>
+
+      <span className={['toggle-pill', checked ? 'is-active' : ''].filter(Boolean).join(' ')}>
+        <span className="toggle-thumb" />
+      </span>
+    </button>
+  );
+}
+
+function ProfileSheet({
+  profileName,
+  cloudUserEmail,
+  cloudStatusText,
+  cloudState,
+  preferences,
+  onTogglePreference,
+  onOpenAccount,
+  onSync,
+  onRestore,
+  onSignOut,
+  onResetApp,
+  onClose,
+}) {
+  return (
+    <div className="sheet-backdrop" role="dialog" aria-modal="true">
+      <section className="sheet-card profile-sheet">
+        <div className="sheet-handle" />
+
+        <div className="sheet-head">
+          <div>
+            <span className="eyebrow">PROFILE & SETTINGS</span>
+            <h2>{profileName}</h2>
+          </div>
+
+          <button type="button" className="icon-button" onClick={onClose} aria-label="Close profile settings">
+            <span className="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        <div className="profile-sheet-summary">
+          <div className="brand-block">
+            <div className="avatar-badge">{(profileName[0] || 'M').toUpperCase()}</div>
+            <div>
+              <strong>{cloudUserEmail || 'Local iPhone mode'}</strong>
+              <p>{cloudStatusText}</p>
+            </div>
+          </div>
+
+          <span className="metric-pill">{cloudState.user ? 'Account live' : 'Guest mode'}</span>
+        </div>
+
+        <div className="profile-sheet-actions">
+          <button type="button" className="primary-button" onClick={onOpenAccount}>Open account center</button>
+          <button type="button" className="ghost-button" onClick={onSync} disabled={!cloudState.user || cloudState.isSyncing}>
+            {cloudState.isSyncing ? 'Syncing...' : 'Sync now'}
+          </button>
+        </div>
+
+        <section className="profile-sheet-section">
+          <div className="section-head profile-sheet-headline">
+            <div>
+              <span className="eyebrow">APP SETTINGS</span>
+              <h2>Interface feel</h2>
+            </div>
+            <span className="metric-pill">Saved locally</span>
+          </div>
+
+          <div className="settings-stack">
+            {APP_SETTINGS.map((setting) => (
+              <SettingToggle
+                key={setting.key}
+                label={setting.label}
+                description={setting.description}
+                checked={preferences.app[setting.key]}
+                onToggle={() => onTogglePreference(setting.section, setting.key)}
+              />
+            ))}
+          </div>
+        </section>
+
+        <section className="profile-sheet-section">
+          <div className="section-head profile-sheet-headline">
+            <div>
+              <span className="eyebrow">EMAIL SETTINGS</span>
+              <h2>Mail rhythm</h2>
+            </div>
+            <span className="metric-pill">{cloudState.user ? 'Ready for sync' : 'Account later'}</span>
+          </div>
+
+          {!cloudState.user ? (
+            <StateCard
+              compact
+              tone="warm"
+              icon="mail_lock"
+              eyebrow="EMAIL NEEDS ACCOUNT"
+              title="Connect email to use delivery preferences"
+              body="The toggles are ready, but account-based email settings only make sense once you sign in."
+            />
+          ) : null}
+
+          <div className="settings-stack">
+            {EMAIL_SETTINGS.map((setting) => (
+              <SettingToggle
+                key={setting.key}
+                label={setting.label}
+                description={setting.description}
+                checked={preferences.email[setting.key]}
+                disabled={!cloudState.user}
+                onToggle={() => onTogglePreference(setting.section, setting.key)}
+              />
+            ))}
+          </div>
+        </section>
+
+        <div className="profile-sheet-actions is-secondary">
+          <button type="button" className="ghost-button" onClick={onRestore} disabled={!cloudState.user || cloudState.isRestoring}>
+            {cloudState.isRestoring ? 'Restoring...' : 'Restore backup'}
+          </button>
+
+          <button type="button" className="ghost-danger" onClick={cloudState.user ? onSignOut : onResetApp}>
+            {cloudState.user ? 'Sign out' : 'Reset app'}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function GlobalTopBar({ eyebrow, title, subtitle, profileName, statusLabel, onOpenProfile }) {
+  return (
+    <header className="top-bar app-global-bar">
+      <div className="global-title">
+        <span className="eyebrow">{eyebrow}</span>
+        <h1>{title}</h1>
+        <p>{subtitle}</p>
+      </div>
+
+      <button type="button" className="profile-launch" onClick={onOpenProfile} aria-label="Open profile and settings">
+        <div className="profile-launch-copy">
+          <span>{statusLabel}</span>
+          <strong>{profileName}</strong>
+        </div>
+
+        <div className="profile-launch-trailing">
+          <span className="material-symbols-outlined">tune</span>
+          <div className="avatar-badge is-small">{(profileName[0] || 'M').toUpperCase()}</div>
+        </div>
+      </button>
+    </header>
+  );
+}
+
 export default function App() {
   const [state, setState] = useState(() => loadState());
   const [activeTab, setActiveTab] = useState('habits');
@@ -570,6 +866,7 @@ export default function App() {
   });
   const [bursts, setBursts] = useState([]);
   const [isHabitSheetOpen, setHabitSheetOpen] = useState(false);
+  const [isProfileSheetOpen, setProfileSheetOpen] = useState(false);
   const [habitDraft, setHabitDraft] = useState(createHabitDraft());
   const photoInputRef = useRef(null);
   const recognitionRef = useRef(null);
@@ -911,7 +1208,11 @@ export default function App() {
   const selectedJournalEntry = state.journal.find((entry) => entry.dateKey === selectedDateKey);
   const recentJournalEntries = [...state.journal].sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt)).slice(0, 3);
   const nudgeText = getSuggestedNudge(totalHabits, todayHabitCount);
+  const selectedDayLabel = selectedDay?.isToday
+    ? 'Today'
+    : formatShortDate(selectedDay.iso, { weekday: 'long', day: 'numeric', month: 'short' });
   const profileName = state.profile.name || cloudState.profile?.display_name || 'there';
+  const motionEnabled = state.preferences.app.habitCelebrations && !state.preferences.app.reduceMotion;
   const isStandalone = typeof window !== 'undefined' && (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone);
   const voiceStatusLabel = {
     idle: 'Mic ready',
@@ -942,11 +1243,44 @@ export default function App() {
       : 'Sign in with email and password to unlock cross-device backup.';
   const mealsForSelectedDay = mealHistory.filter((meal) => meal.date_key === selectedDateKey);
   const visibleMeals = mealsForSelectedDay.length ? mealsForSelectedDay : mealHistory.slice(0, 6);
+  const topBarMeta = {
+    habits: {
+      eyebrow: 'MOMENTUM',
+      title: 'Habit tracker',
+      subtitle: `${selectedDayLabel} • ${selectedHabitCount} closed • ${state.preferences.app.dailyNudges ? 'Gentle nudges on' : 'Quiet mode'}`,
+    },
+    calories: {
+      eyebrow: 'MOMENTUM',
+      title: 'Calorie tracking',
+      subtitle: `${selectedDayLabel} • ${selectedCalories || 0} kcal logged`,
+    },
+    insights: {
+      eyebrow: getGreeting().toUpperCase(),
+      title: 'Insights',
+      subtitle: state.profile.intention || 'Account, sync, recovery and weekly clarity.',
+    },
+  }[activeTab];
   const accountStats = [
     { label: 'Meals saved', value: cloudState.user ? String(mealHistory.length) : '0' },
     { label: 'Email', value: cloudState.recoveryMode ? 'Recovery' : cloudState.user?.email_confirmed_at ? 'Verified' : cloudState.user ? 'Check inbox' : 'Offline' },
     { label: 'Backup', value: cloudState.lastSyncedAt ? 'Live' : cloudState.user ? 'Ready' : 'Locked' },
   ];
+  const shouldShowConfirmationBanner = !cloudState.user && (
+    cloudState.notice.includes('Account created. If Supabase asks for email confirmation')
+    || cloudState.notice.includes('Confirmation email sent again.')
+    || cloudState.error === 'Confirm your email once in Supabase, then sign in.'
+  );
+  const shouldShowRecoveryBanner = !cloudState.user && cloudState.notice.includes('Recovery email sent.');
+  const shouldShowSuccessBanner = cloudState.user && (
+    cloudState.notice.includes('Password reset complete.')
+    || cloudState.notice.includes('Signed in successfully.')
+    || cloudState.notice.includes('Account created and signed in.')
+  );
+  const shouldShowPlainNotice = Boolean(cloudState.notice)
+    && !shouldShowConfirmationBanner
+    && !shouldShowRecoveryBanner
+    && !shouldShowSuccessBanner
+    && !cloudState.recoveryMode;
 
   useEffect(() => {
     if (!cloudState.user || !hasHydratedDb || isCloudBootstrapping) return undefined;
@@ -1245,6 +1579,24 @@ export default function App() {
 
   function updateAuthUi(field, value) {
     setAuthUi((previous) => ({ ...previous, [field]: value }));
+  }
+
+  function togglePreference(section, key) {
+    setState((previous) => ({
+      ...previous,
+      preferences: {
+        ...previous.preferences,
+        [section]: {
+          ...previous.preferences[section],
+          [key]: !previous.preferences[section][key],
+        },
+      },
+    }));
+  }
+
+  function openAccountCenter() {
+    setActiveTab('insights');
+    setProfileSheetOpen(false);
   }
 
   async function handlePasswordAuth(mode) {
@@ -1790,16 +2142,14 @@ export default function App() {
     setShowOnboarding(true);
     selectDate(todayKey);
     setActiveTab('habits');
+    setProfileSheetOpen(false);
     setJournalDraft('');
   }
-  const selectedDayLabel = selectedDay?.isToday
-    ? 'Today'
-    : formatShortDate(selectedDay.iso, { weekday: 'long', day: 'numeric', month: 'short' });
   const sleepProgress = clamp(((Number(state.sleep.entries?.[selectedDateKey]) || 0) / (Number(state.sleep.target) || DEFAULT_SLEEP_TARGET)) * 100, 0, 100);
 
   return (
-    <div className="app-shell">
-      <SparkLayer bursts={bursts} />
+    <div className={['app-shell', state.preferences.app.reduceMotion ? 'is-reduced-motion' : ''].filter(Boolean).join(' ')}>
+      {motionEnabled ? <SparkLayer bursts={bursts} /> : null}
 
       {showOnboarding ? (
         <OnboardingOverlay
@@ -1822,7 +2172,47 @@ export default function App() {
         />
       ) : null}
 
+      {isProfileSheetOpen ? (
+        <ProfileSheet
+          profileName={profileName}
+          cloudUserEmail={cloudUserEmail}
+          cloudStatusText={cloudStatusText}
+          cloudState={cloudState}
+          preferences={state.preferences}
+          onTogglePreference={togglePreference}
+          onOpenAccount={openAccountCenter}
+          onSync={() => syncSnapshotToCloud()}
+          onRestore={restoreSnapshotFromCloud}
+          onSignOut={() => {
+            setProfileSheetOpen(false);
+            disconnectCloud();
+          }}
+          onResetApp={resetEverything}
+          onClose={() => setProfileSheetOpen(false)}
+        />
+      ) : null}
+
       <main className="app-frame">
+        <GlobalTopBar
+          eyebrow={topBarMeta.eyebrow}
+          title={topBarMeta.title}
+          subtitle={topBarMeta.subtitle}
+          profileName={profileName}
+          statusLabel={cloudState.user ? 'Profile live' : 'Guest mode'}
+          onOpenProfile={() => setProfileSheetOpen(true)}
+        />
+
+        {isCloudBootstrapping ? (
+          <StateCard
+            compact
+            tone="loading"
+            icon="cloud_sync"
+            eyebrow="SYNCING ACCOUNT"
+            title="Preparing your cloud profile"
+            body="Pulling profile, backup and meal history so this device catches up gently."
+          />
+        ) : null}
+
         {activeTab === 'habits' ? (
           <section className="tab-view">
             <section className="section-card">
@@ -1857,10 +2247,15 @@ export default function App() {
                     />
                   ))
                 ) : (
-                  <div className="empty-card">
-                    <strong>No habits yet</strong>
-                    <p>Start with one or two. The goal is a daily return, not a huge list.</p>
-                  </div>
+                  <StateCard
+                    tone="warm"
+                    icon="playlist_add_check_circle"
+                    eyebrow="EMPTY START"
+                    title="No habits yet"
+                    body="Start with one or two. The goal is a daily return, not a huge list."
+                    actionLabel="Create first habit"
+                    onAction={openNewHabitSheet}
+                  />
                 )}
               </div>
             </section>
@@ -1937,10 +2332,14 @@ export default function App() {
                     </button>
                   ))
                 ) : (
-                  <div className="empty-card compact">
-                    <strong>No archive yet</strong>
-                    <p>Your notes for each day will appear here.</p>
-                  </div>
+                  <StateCard
+                    compact
+                    tone="neutral"
+                    icon="edit_note"
+                    eyebrow="WAITING FOR NOTES"
+                    title="No archive yet"
+                    body="Your notes for each day will appear here."
+                  />
                 )}
               </div>
 
@@ -2139,15 +2538,23 @@ export default function App() {
               </div>
 
               {!cloudState.user ? (
-                <div className="empty-card">
-                  <strong>Sign in to build meal history</strong>
-                  <p>Each AI capture will save here with calories, foods, and photo previews tied to your account.</p>
-                </div>
+                <StateCard
+                  tone="warm"
+                  icon="lock"
+                  eyebrow="ACCOUNT NEEDED"
+                  title="Sign in to build meal history"
+                  body="Each AI capture will save here with calories, foods, and photo previews tied to your account."
+                  actionLabel="Open account center"
+                  onAction={openAccountCenter}
+                />
               ) : mealHistoryState.isLoading ? (
-                <div className="empty-card">
-                  <strong>Loading meals</strong>
-                  <p>Pulling your recent captures from Supabase.</p>
-                </div>
+                <StateCard
+                  tone="loading"
+                  icon="browse_activity"
+                  eyebrow="LOADING"
+                  title="Pulling your meal history"
+                  body="Supabase is fetching recent captures and private image previews."
+                />
               ) : visibleMeals.length ? (
                 <div className="meal-history-list">
                   {visibleMeals.map((meal) => (
@@ -2169,10 +2576,13 @@ export default function App() {
                   ))}
                 </div>
               ) : (
-                <div className="empty-card">
-                  <strong>No meals saved yet</strong>
-                  <p>Your first photo or voice meal capture will come back here as a reusable food history.</p>
-                </div>
+                <StateCard
+                  tone="neutral"
+                  icon="photo_camera"
+                  eyebrow="FIRST CAPTURE"
+                  title="No meals saved yet"
+                  body="Your first photo or voice meal capture will come back here as a reusable food history."
+                />
               )}
 
               {mealHistoryState.error ? <p className="analysis-error">{mealHistoryState.error}</p> : null}
@@ -2208,21 +2618,6 @@ export default function App() {
 
         {activeTab === 'insights' ? (
           <section className="tab-view">
-            <header className="top-bar">
-              <div className="brand-block">
-                <div className="avatar-badge">{(profileName[0] || 'M').toUpperCase()}</div>
-                <div>
-                  <span className="eyebrow">{getGreeting()}</span>
-                  <h1>{profileName}</h1>
-                </div>
-              </div>
-
-              <div className="streak-pill">
-                <span className="material-symbols-outlined">local_fire_department</span>
-                <strong>{bestStreak}</strong>
-              </div>
-            </header>
-
             <section className="hero-panel">
               <div>
                 <span className="eyebrow">ONE WEEK RHYTHM</span>
@@ -2238,6 +2633,10 @@ export default function App() {
                 <div className="hero-chip">
                   <span>Average sleep</span>
                   <strong>{averageSleep ? averageSleep.toFixed(1) : '0.0'}h</strong>
+                </div>
+                <div className="hero-chip">
+                  <span>Best streak</span>
+                  <strong>{bestStreak}d</strong>
                 </div>
               </div>
             </section>
@@ -2278,6 +2677,49 @@ export default function App() {
               </div>
 
               <div className="sync-shell">
+                {shouldShowConfirmationBanner ? (
+                  <StateCard
+                    tone="warm"
+                    icon="mark_email_unread"
+                    eyebrow="CONFIRM EMAIL"
+                    title="One inbox tap finishes setup"
+                    body="Supabase is waiting for email confirmation before password sign-in can fully unlock."
+                    actionLabel={cloudState.isResendingConfirmation ? 'Sending email...' : 'Resend confirmation'}
+                    onAction={resendConfirmationEmail}
+                    actionDisabled={cloudState.isResendingConfirmation}
+                  />
+                ) : null}
+
+                {shouldShowRecoveryBanner ? (
+                  <StateCard
+                    tone="neutral"
+                    icon="password"
+                    eyebrow="RECOVERY SENT"
+                    title="Check your inbox on iPhone"
+                    body="Open the secure recovery link from your email. This app will switch into reset mode automatically."
+                  />
+                ) : null}
+
+                {shouldShowSuccessBanner ? (
+                  <StateCard
+                    tone="success"
+                    icon="check_circle"
+                    eyebrow="ACCOUNT READY"
+                    title="Identity and sync are live"
+                    body="You are back in. Cloud backup, meals and account settings can keep moving across devices."
+                  />
+                ) : null}
+
+                {cloudState.recoveryMode ? (
+                  <StateCard
+                    tone="warm"
+                    icon="shield_lock"
+                    eyebrow="STEP 2"
+                    title="Finish password reset here"
+                    body="This tab is already holding your recovery session. Set the new password below and the app will close the loop."
+                  />
+                ) : null}
+
                 {!cloudState.user ? (
                   <>
                     <div className="auth-mode-row">
@@ -2556,8 +2998,8 @@ export default function App() {
                   <p>Habits, day history, calories, sleep, journal, profile preferences, and meal captures with private photo storage.</p>
                 </div>
 
-                {cloudState.notice ? <p className="notice-copy">{cloudState.notice}</p> : null}
-                {cloudState.error ? <p className="analysis-error">{cloudState.error}</p> : null}
+                {shouldShowPlainNotice ? <p className="notice-copy">{cloudState.notice}</p> : null}
+                {!shouldShowConfirmationBanner && cloudState.error ? <p className="analysis-error">{cloudState.error}</p> : null}
               </div>
             </section>
 
@@ -2615,8 +3057,6 @@ export default function App() {
             </section>
           </section>
         ) : null}
-
-        <button type="button" className="reset-link" onClick={resetEverything}>Reset app</button>
       </main>
 
       <nav className="bottom-nav">
