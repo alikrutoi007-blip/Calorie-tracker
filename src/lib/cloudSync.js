@@ -14,6 +14,10 @@ function requireClient() {
   return client;
 }
 
+function getAuthRedirectUrl() {
+  return import.meta.env.VITE_SITE_URL || window.location.origin;
+}
+
 export async function getCloudSession() {
   if (!isSupabaseConfigured) return { session: null, user: null };
 
@@ -28,8 +32,8 @@ export function onCloudAuthChange(callback) {
   const client = getSupabaseClient();
   if (!client) return () => {};
 
-  const { data } = client.auth.onAuthStateChange((_event, session) => {
-    callback({ session, user: session?.user || null });
+  const { data } = client.auth.onAuthStateChange((event, session) => {
+    callback({ event, session, user: session?.user || null });
   });
 
   return () => data.subscription.unsubscribe();
@@ -66,7 +70,7 @@ export async function signInWithPassword({ email, password }) {
 
 export async function sendMagicLink(email) {
   const client = requireClient();
-  const redirectTo = import.meta.env.VITE_SITE_URL || window.location.origin;
+  const redirectTo = getAuthRedirectUrl();
 
   const { error } = await client.auth.signInWithOtp({
     email,
@@ -82,9 +86,42 @@ export async function signOutFromCloud() {
   if (error) throw error;
 }
 
-export async function updateCloudPassword(password) {
+export async function requestPasswordReset(email) {
   const client = requireClient();
-  const { data, error } = await client.auth.updateUser({ password });
+  const redirectTo = getAuthRedirectUrl();
+
+  const { error } = await client.auth.resetPasswordForEmail(email, {
+    redirectTo,
+  });
+
+  if (error) throw error;
+}
+
+export async function resendSignupConfirmation(email) {
+  const client = requireClient();
+  const redirectTo = getAuthRedirectUrl();
+
+  const { error } = await client.auth.resend({
+    type: 'signup',
+    email,
+    options: {
+      emailRedirectTo: redirectTo,
+    },
+  });
+
+  if (error) throw error;
+}
+
+export async function sendPasswordReauth() {
+  const client = requireClient();
+  const { error } = await client.auth.reauthenticate();
+  if (error) throw error;
+}
+
+export async function updateCloudPassword(password, nonce) {
+  const client = requireClient();
+  const payload = nonce ? { password, nonce } : { password };
+  const { data, error } = await client.auth.updateUser(payload);
   if (error) throw error;
   return data;
 }

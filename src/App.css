@@ -792,6 +792,13 @@
   gap: 12px;
 }
 
+.password-panel-head,
+.auth-link-row,
+.recovery-card {
+  display: flex;
+  gap: 12px;
+}
+
 .account-stat-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -820,6 +827,21 @@
 
 .sync-actions > * {
   min-width: 0;
+}
+
+.auth-link-row {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.text-link-button {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 .sync-copy,
@@ -909,6 +931,28 @@
   align-items: flex-start;
 }
 
+.recovery-card {
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 16px;
+  border-radius: 24px;
+  border: 1px solid rgba(239, 106, 46, 0.16);
+  background: linear-gradient(180deg, rgba(255, 248, 242, 0.96), rgba(255, 255, 255, 0.82));
+}
+
+.recovery-card h3,
+.password-panel-head strong {
+  margin: 6px 0 0;
+  font-family: 'Manrope', 'Segoe UI', sans-serif;
+  font-size: 1.02rem;
+}
+
+.recovery-card p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
 .account-summary-card h3 {
   margin: 6px 0 4px;
   font-family: 'Manrope', 'Segoe UI', sans-serif;
@@ -925,9 +969,21 @@
   display: block;
 }
 
+.helper-note {
+  display: block;
+  margin-top: 10px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
 .account-stat-card strong {
   margin-top: 6px;
   font-size: 1rem;
+}
+
+.password-panel-head {
+  justify-content: space-between;
+  align-items: flex-start;
 }
 
 .meal-thumb {
@@ -1383,8 +1439,11 @@ button:disabled {
 
   .analysis-head,
   .sync-actions,
+  .auth-link-row,
   .meal-card,
   .account-summary-card,
+  .recovery-card,
+  .password-panel-head,
   .meal-topline,
   .meal-meta {
     flex-direction: column;

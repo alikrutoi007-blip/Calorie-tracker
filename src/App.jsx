@@ -8,6 +8,9 @@ import {
   onCloudAuthChange,
   pullCloudSnapshot,
   pushCloudSnapshot,
+  requestPasswordReset,
+  resendSignupConfirmation,
+  sendPasswordReauth,
   signInWithPassword,
   signUpWithPassword,
   signOutFromCloud,
@@ -96,10 +99,55 @@ function formatAuthMessage(message) {
   const lowered = message.toLowerCase();
   if (lowered.includes('invalid login credentials')) return 'Email or password is incorrect.';
   if (lowered.includes('email not confirmed')) return 'Confirm your email once in Supabase, then sign in.';
+  if (lowered.includes('nonce') || lowered.includes('reauthentication')) return 'Supabase needs an email verification code before the password can change.';
   if (lowered.includes('user already registered')) return 'This email already has an account. Try Sign in.';
   if (lowered.includes('password should be at least')) return 'Password is too short. Use at least 6 characters.';
   if (lowered.includes('same password')) return 'Choose a new password, not the current one.';
   return message;
+}
+
+function isRecoveryRedirect() {
+  if (typeof window === 'undefined') return false;
+
+  const url = new URL(window.location.href);
+  const hashParams = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : '');
+  return url.searchParams.get('type') === 'recovery' || hashParams.get('type') === 'recovery';
+}
+
+function clearAuthRedirectUrl() {
+  if (typeof window === 'undefined') return;
+
+  const url = new URL(window.location.href);
+  const hashParams = new URLSearchParams(url.hash.startsWith('#') ? url.hash.slice(1) : '');
+  let didChange = false;
+
+  ['access_token', 'refresh_token', 'expires_at', 'expires_in', 'token_type', 'type', 'code'].forEach((key) => {
+    if (url.searchParams.has(key)) {
+      url.searchParams.delete(key);
+      didChange = true;
+    }
+
+    if (hashParams.has(key)) {
+      hashParams.delete(key);
+      didChange = true;
+    }
+  });
+
+  const nextHash = hashParams.toString();
+  if (url.hash !== (nextHash ? `#${nextHash}` : '')) {
+    url.hash = nextHash ? `#${nextHash}` : '';
+    didChange = true;
+  }
+
+  if (didChange) {
+    window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+  }
+}
+
+function needsPasswordReauth(message) {
+  if (!message) return false;
+  const lowered = message.toLowerCase();
+  return lowered.includes('nonce') || lowered.includes('reauthentication') || lowered.includes('secure password change');
 }
 
 function getRecentDays(count) {
@@ -549,6 +597,7 @@ export default function App() {
   const [passwordDraft, setPasswordDraft] = useState({
     nextPassword: '',
     confirmPassword: '',
+    reauthCode: '',
   });
   const [authUi, setAuthUi] = useState({
     showAuthPassword: false,
@@ -564,10 +613,14 @@ export default function App() {
     error: '',
     notice: '',
     isAuthenticating: false,
+    isSendingRecoveryEmail: false,
+    isResendingConfirmation: false,
     isSavingProfile: false,
+    isSendingReauth: false,
     isUpdatingPassword: false,
     isSyncing: false,
     isRestoring: false,
+    recoveryMode: false,
   });
   const [mealHistory, setMealHistory] = useState([]);
   const [mealHistoryState, setMealHistoryState] = useState({
@@ -581,6 +634,7 @@ export default function App() {
   });
   const [isCloudBootstrapping, setIsCloudBootstrapping] = useState(false);
   const latestStateRef = useRef(state);
+  const recoveryNotice = 'Recovery link verified. Set a new password to finish signing back in.';
 
   const weekDays = useMemo(() => getRecentDays(RHYTHM_DAYS), []);
   const todayKey = weekDays[weekDays.length - 1]?.key || formatDateKey(new Date());
@@ -656,6 +710,7 @@ export default function App() {
     if (!user) return;
 
     const shouldPreferCloud = options.preferCloudSnapshot !== false;
+    const stickyNotice = options.notice || '';
     setIsCloudBootstrapping(true);
 
     try {
@@ -665,7 +720,7 @@ export default function App() {
         ...previous,
         profile,
         error: '',
-        notice: '',
+        notice: stickyNotice,
       }));
 
       setAccountDraft({
@@ -689,7 +744,7 @@ export default function App() {
           ...previous,
           lastSyncedAt: snapshot.updated_at || previous.lastSyncedAt,
           error: '',
-          notice: '',
+          notice: stickyNotice,
         }));
       } else {
         const synced = await pushCloudSnapshot(user.id, latestStateRef.current);
@@ -697,7 +752,7 @@ export default function App() {
           ...previous,
           lastSyncedAt: synced?.updated_at || new Date().toISOString(),
           error: '',
-          notice: 'Cloud backup created for this account.',
+          notice: stickyNotice || 'Cloud backup created for this account.',
         }));
       }
 
@@ -719,29 +774,44 @@ export default function App() {
 
     async function hydrateCloud() {
       if (!isSupabaseConfigured) {
-        setCloudState((previous) => ({ ...previous, status: 'setup_required', notice: '' }));
+        setCloudState((previous) => ({ ...previous, status: 'setup_required', notice: '', recoveryMode: false }));
         return;
       }
 
       try {
         const { session, user } = await getCloudSession();
+        const recoveryMode = Boolean(user && isRecoveryRedirect());
         if (isCancelled) return;
 
         setCloudState((previous) => ({
           ...previous,
           session,
           user,
-          status: user ? 'authenticated' : 'ready',
+          status: recoveryMode ? 'recovery' : user ? 'authenticated' : 'ready',
           profile: previous.profile,
           error: '',
-          notice: '',
+          notice: recoveryMode ? recoveryNotice : '',
+          recoveryMode,
         }));
 
         if (user?.email) {
-          setAuthDraft((previous) => ({ ...previous, email: user.email }));
+          setAuthDraft((previous) => ({
+            ...previous,
+            email: user.email,
+            mode: 'signin',
+            password: '',
+          }));
         }
 
-        if (user) await bootstrapSignedInUser(user);
+        if (recoveryMode) {
+          setActiveTab('insights');
+          setPasswordDraft((previous) => ({ ...previous, nextPassword: '', confirmPassword: '', reauthCode: '' }));
+          clearAuthRedirectUrl();
+        }
+
+        if (user) {
+          await bootstrapSignedInUser(user, recoveryMode ? { notice: recoveryNotice } : {});
+        }
       } catch (error) {
         if (isCancelled) return;
 
@@ -755,21 +825,36 @@ export default function App() {
     }
 
     hydrateCloud();
-    const unsubscribe = onCloudAuthChange(({ session, user }) => {
+    const unsubscribe = onCloudAuthChange(({ event, session, user }) => {
       if (isCancelled) return;
+
+      const recoveryMode = event === 'PASSWORD_RECOVERY';
+      const shouldBootstrap = event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'PASSWORD_RECOVERY';
 
       setCloudState((previous) => ({
         ...previous,
         session,
         user,
-        status: user ? 'authenticated' : 'ready',
+        status: recoveryMode ? 'recovery' : user ? 'authenticated' : 'ready',
         profile: user ? previous.profile : null,
         error: '',
-        notice: '',
+        notice: recoveryMode ? recoveryNotice : event === 'USER_UPDATED' ? previous.notice : '',
+        recoveryMode: recoveryMode ? true : user ? previous.recoveryMode : false,
       }));
 
       if (user?.email) {
-        setAuthDraft((previous) => ({ ...previous, email: user.email }));
+        setAuthDraft((previous) => ({
+          ...previous,
+          email: user.email,
+          mode: 'signin',
+          password: recoveryMode ? '' : previous.password,
+        }));
+      }
+
+      if (recoveryMode) {
+        setActiveTab('insights');
+        setPasswordDraft((previous) => ({ ...previous, nextPassword: '', confirmPassword: '', reauthCode: '' }));
+        clearAuthRedirectUrl();
       }
 
       if (!user) {
@@ -782,7 +867,9 @@ export default function App() {
         return;
       }
 
-      bootstrapSignedInUser(user);
+      if (shouldBootstrap) {
+        bootstrapSignedInUser(user, recoveryMode ? { notice: recoveryNotice } : {});
+      }
     });
 
     return () => {
@@ -834,12 +921,16 @@ export default function App() {
     error: 'Mic blocked',
   }[captureState.voiceStatus];
   const cloudUserEmail = cloudState.user?.email || authDraft.email;
-  const cloudStatusLabel = cloudState.user
-    ? 'Cloud live'
-    : cloudState.configured
-      ? 'Ready to connect'
-      : 'Setup needed';
-  const cloudStatusText = cloudState.lastSyncedAt
+  const cloudStatusLabel = cloudState.recoveryMode
+    ? 'Reset password'
+    : cloudState.user
+      ? 'Cloud live'
+      : cloudState.configured
+        ? 'Ready to connect'
+        : 'Setup needed';
+  const cloudStatusText = cloudState.recoveryMode
+    ? recoveryNotice
+    : cloudState.lastSyncedAt
     ? `Last sync ${formatShortDate(new Date(cloudState.lastSyncedAt), {
         month: 'short',
         day: 'numeric',
@@ -853,7 +944,7 @@ export default function App() {
   const visibleMeals = mealsForSelectedDay.length ? mealsForSelectedDay : mealHistory.slice(0, 6);
   const accountStats = [
     { label: 'Meals saved', value: cloudState.user ? String(mealHistory.length) : '0' },
-    { label: 'Email', value: cloudState.user?.email_confirmed_at ? 'Verified' : cloudState.user ? 'Check inbox' : 'Offline' },
+    { label: 'Email', value: cloudState.recoveryMode ? 'Recovery' : cloudState.user?.email_confirmed_at ? 'Verified' : cloudState.user ? 'Check inbox' : 'Offline' },
     { label: 'Backup', value: cloudState.lastSyncedAt ? 'Live' : cloudState.user ? 'Ready' : 'Locked' },
   ];
 
@@ -1181,11 +1272,17 @@ export default function App() {
         });
 
         if (!data.session && data.user) {
+          setAuthDraft((previous) => ({
+            ...previous,
+            mode: 'signin',
+            password: '',
+          }));
           setCloudState((previous) => ({
             ...previous,
             isAuthenticating: false,
             status: 'ready',
             error: '',
+            recoveryMode: false,
             notice: 'Account created. If Supabase asks for email confirmation, confirm once and then sign in.',
           }));
           return;
@@ -1194,11 +1291,17 @@ export default function App() {
         await signInWithPassword({ email, password });
       }
 
+      setAuthDraft((previous) => ({
+        ...previous,
+        email,
+        password: '',
+      }));
       setCloudState((previous) => ({
         ...previous,
         isAuthenticating: false,
         status: 'authenticated',
         error: '',
+        recoveryMode: false,
         notice: mode === 'signup' ? 'Account created and signed in.' : 'Signed in successfully.',
       }));
     } catch (error) {
@@ -1207,6 +1310,81 @@ export default function App() {
         isAuthenticating: false,
         status: 'error',
         error: formatAuthMessage(error instanceof Error ? error.message : 'Account auth failed.'),
+        notice: '',
+      }));
+    }
+  }
+
+  async function sendRecoveryEmail() {
+    const email = authDraft.email.trim();
+
+    if (!email) {
+      setCloudState((previous) => ({ ...previous, error: 'Enter your email first, then I can send the recovery link.', notice: '' }));
+      return;
+    }
+
+    setCloudState((previous) => ({
+      ...previous,
+      isSendingRecoveryEmail: true,
+      error: '',
+      notice: '',
+    }));
+
+    try {
+      await requestPasswordReset(email);
+      setAuthDraft((previous) => ({
+        ...previous,
+        email,
+        mode: 'signin',
+        password: '',
+      }));
+      setCloudState((previous) => ({
+        ...previous,
+        isSendingRecoveryEmail: false,
+        status: 'ready',
+        error: '',
+        notice: 'Recovery email sent. Open the link on this iPhone and choose a new password.',
+      }));
+    } catch (error) {
+      setCloudState((previous) => ({
+        ...previous,
+        isSendingRecoveryEmail: false,
+        status: 'error',
+        error: formatAuthMessage(error instanceof Error ? error.message : 'Recovery email could not be sent.'),
+        notice: '',
+      }));
+    }
+  }
+
+  async function resendConfirmationEmail() {
+    const email = authDraft.email.trim();
+
+    if (!email) {
+      setCloudState((previous) => ({ ...previous, error: 'Enter your email first so I know where to resend confirmation.', notice: '' }));
+      return;
+    }
+
+    setCloudState((previous) => ({
+      ...previous,
+      isResendingConfirmation: true,
+      error: '',
+      notice: '',
+    }));
+
+    try {
+      await resendSignupConfirmation(email);
+      setCloudState((previous) => ({
+        ...previous,
+        isResendingConfirmation: false,
+        error: '',
+        notice: 'Confirmation email sent again. One tap in your inbox should unlock sign in.',
+      }));
+    } catch (error) {
+      setCloudState((previous) => ({
+        ...previous,
+        isResendingConfirmation: false,
+        status: 'error',
+        error: formatAuthMessage(error instanceof Error ? error.message : 'Confirmation email could not be resent.'),
         notice: '',
       }));
     }
@@ -1296,7 +1474,8 @@ export default function App() {
       await signOutFromCloud();
       setMealHistory([]);
       setMealHistoryState({ isLoading: false, error: '' });
-      setAuthDraft((previous) => ({ ...previous, password: '' }));
+      setAuthDraft((previous) => ({ ...previous, mode: 'signin', password: '' }));
+      setPasswordDraft({ nextPassword: '', confirmPassword: '', reauthCode: '' });
       setCloudState((previous) => ({
         ...previous,
         session: null,
@@ -1304,6 +1483,7 @@ export default function App() {
         profile: null,
         status: 'ready',
         error: '',
+        recoveryMode: false,
         notice: 'Signed out on this device.',
       }));
     } catch (error) {
@@ -1360,6 +1540,7 @@ export default function App() {
   async function changeAccountPassword() {
     const nextPassword = passwordDraft.nextPassword;
     const confirmPassword = passwordDraft.confirmPassword;
+    const reauthCode = passwordDraft.reauthCode.trim();
 
     if (!cloudState.user) {
       setCloudState((previous) => ({ ...previous, error: 'Sign in first so password settings are attached to your account.', notice: '' }));
@@ -1384,20 +1565,59 @@ export default function App() {
     setCloudState((previous) => ({ ...previous, isUpdatingPassword: true, error: '', notice: '' }));
 
     try {
-      await updateCloudPassword(nextPassword);
-      setPasswordDraft({ nextPassword: '', confirmPassword: '' });
+      await updateCloudPassword(nextPassword, reauthCode || undefined);
+      clearAuthRedirectUrl();
+      setPasswordDraft({ nextPassword: '', confirmPassword: '', reauthCode: '' });
+      setAuthDraft((previous) => ({ ...previous, password: '' }));
       setCloudState((previous) => ({
         ...previous,
         isUpdatingPassword: false,
+        status: 'authenticated',
+        recoveryMode: false,
         error: '',
-        notice: 'Password updated.',
+        notice: previous.recoveryMode ? 'Password reset complete. You are back in.' : 'Password updated.',
       }));
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Password could not be updated.';
       setCloudState((previous) => ({
         ...previous,
         isUpdatingPassword: false,
         status: 'error',
-        error: formatAuthMessage(error instanceof Error ? error.message : 'Password could not be updated.'),
+        error: formatAuthMessage(message),
+        notice: needsPasswordReauth(message)
+          ? 'Tap Email code, paste the code below, then try the password change again.'
+          : '',
+      }));
+    }
+  }
+
+  async function sendPasswordCode() {
+    if (!cloudState.user) {
+      setCloudState((previous) => ({ ...previous, error: 'Sign in first so the code is tied to your account.', notice: '' }));
+      return;
+    }
+
+    setCloudState((previous) => ({
+      ...previous,
+      isSendingReauth: true,
+      error: '',
+      notice: '',
+    }));
+
+    try {
+      await sendPasswordReauth();
+      setCloudState((previous) => ({
+        ...previous,
+        isSendingReauth: false,
+        error: '',
+        notice: 'Email code sent. Paste it below only if Supabase asks for secure password change.',
+      }));
+    } catch (error) {
+      setCloudState((previous) => ({
+        ...previous,
+        isSendingReauth: false,
+        status: 'error',
+        error: formatAuthMessage(error instanceof Error ? error.message : 'Password verification code could not be sent.'),
         notice: '',
       }));
     }
@@ -2135,16 +2355,52 @@ export default function App() {
                       </button>
                     </div>
 
+                    <div className="auth-link-row">
+                      <button
+                        type="button"
+                        className="text-link-button"
+                        onClick={sendRecoveryEmail}
+                        disabled={!cloudState.configured || cloudState.isSendingRecoveryEmail}
+                      >
+                        {cloudState.isSendingRecoveryEmail ? 'Sending recovery...' : 'Forgot password'}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="text-link-button"
+                        onClick={resendConfirmationEmail}
+                        disabled={!cloudState.configured || cloudState.isResendingConfirmation}
+                      >
+                        {cloudState.isResendingConfirmation ? 'Sending email...' : 'Resend confirmation'}
+                      </button>
+                    </div>
+
                     <div className="account-helper-card">
                       <strong>{authDraft.mode === 'signup' ? 'Why create an account' : 'Why sign in'}</strong>
                       <p>Sync habits, calories, sleep, journal and meal history across devices. Your food photos stay in private Supabase storage.</p>
+                      <small className="helper-note">
+                        {authDraft.mode === 'signup'
+                          ? 'If email confirmation is enabled in Supabase, one inbox tap finishes setup.'
+                          : 'Forgot password sends a secure recovery link back to this same screen.'}
+                      </small>
                     </div>
                   </>
                 ) : (
                   <>
+                    {cloudState.recoveryMode ? (
+                      <div className="recovery-card">
+                        <div>
+                          <span className="eyebrow">PASSWORD RECOVERY</span>
+                          <h3>Choose a new password</h3>
+                          <p>This secure email link already recognized your account. Finish the reset below, then sync keeps working normally.</p>
+                        </div>
+                        <span className="metric-pill">Secure link</span>
+                      </div>
+                    ) : null}
+
                     <div className="account-summary-card">
                       <div>
-                        <span className="eyebrow">SIGNED IN</span>
+                        <span className="eyebrow">{cloudState.recoveryMode ? 'ALMOST THERE' : 'SIGNED IN'}</span>
                         <h3>{accountDraft.displayName || cloudState.profile?.display_name || profileName}</h3>
                         <p>{cloudUserEmail}</p>
                       </div>
@@ -2201,6 +2457,14 @@ export default function App() {
                     </div>
 
                     <div className="password-stack">
+                      <div className="password-panel-head">
+                        <div>
+                          <span className="eyebrow">{cloudState.recoveryMode ? 'RESET PASSWORD' : 'PASSWORD'}</span>
+                          <strong>{cloudState.recoveryMode ? 'Finish recovery on this device' : 'Refresh password safely'}</strong>
+                        </div>
+                        {cloudState.recoveryMode ? <span className="metric-pill">Step 2</span> : null}
+                      </div>
+
                       <label className="field">
                         <span>New password</span>
                         <input
@@ -2221,6 +2485,19 @@ export default function App() {
                         />
                       </label>
 
+                      <label className="field">
+                        <span>Email code</span>
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={passwordDraft.reauthCode}
+                          onChange={(event) => updatePasswordDraft('reauthCode', event.target.value.replace(/\s+/g, ''))}
+                          placeholder="Optional: paste code only if Supabase asks"
+                        />
+                      </label>
+
+                      <p className="sync-copy">If Secure password change is enabled in Supabase, send a code to your inbox and paste it here before retrying.</p>
+
                       <div className="sync-actions">
                         <button
                           type="button"
@@ -2233,10 +2510,21 @@ export default function App() {
                         <button
                           type="button"
                           className="ghost-button"
+                          onClick={sendPasswordCode}
+                          disabled={cloudState.isSendingReauth}
+                        >
+                          {cloudState.isSendingReauth ? 'Sending code...' : 'Email code'}
+                        </button>
+
+                        <button
+                          type="button"
+                          className="ghost-button"
                           onClick={changeAccountPassword}
                           disabled={cloudState.isUpdatingPassword}
                         >
-                          {cloudState.isUpdatingPassword ? 'Updating password...' : 'Update password'}
+                          {cloudState.isUpdatingPassword
+                            ? cloudState.recoveryMode ? 'Finishing reset...' : 'Updating password...'
+                            : cloudState.recoveryMode ? 'Finish reset' : 'Update password'}
                         </button>
                       </div>
                     </div>
