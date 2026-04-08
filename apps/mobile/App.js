@@ -43,6 +43,41 @@ function Pill({ children, accent }) {
   )
 }
 
+function AvatarBadge({ name }) {
+  const initial = (name || 'M').trim().charAt(0).toUpperCase()
+
+  return (
+    <View style={styles.avatarBadge}>
+      <Text style={styles.avatarInitial}>{initial}</Text>
+    </View>
+  )
+}
+
+function HeroPanel({ eyebrow, title, body, stats, tag }) {
+  return (
+    <View style={styles.heroPanel}>
+      <View style={styles.heroGlowPrimary} />
+      <View style={styles.heroGlowSecondary} />
+      <View style={styles.heroHeader}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.heroEyebrow}>{eyebrow}</Text>
+          <Text style={styles.heroTitle}>{title}</Text>
+          <Text style={styles.heroBody}>{body}</Text>
+        </View>
+        {tag ? <Pill accent>{tag}</Pill> : null}
+      </View>
+      <View style={styles.heroStats}>
+        {stats.map((stat) => (
+          <View key={stat.label} style={styles.heroStat}>
+            <Text style={styles.heroStatValue}>{stat.value}</Text>
+            <Text style={styles.heroStatLabel}>{stat.label}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  )
+}
+
 export default function App() {
   const seed = createMobileSeedState()
   const cameraRef = useRef(null)
@@ -72,6 +107,35 @@ export default function App() {
     subscriptions: 'RevenueCat not configured yet',
     cloud: 'Supabase mobile env not configured yet',
   })
+
+  function patchState(updater) {
+    setState((previous) => updater(previous))
+  }
+
+  const hydrateCloudState = useCallback(async (user) => {
+    const [profile, captures, snapshot, subscription] = await Promise.all([
+      fetchCloudProfile(user.id),
+      fetchMealCaptures(user.id, { limit: 12 }),
+      pullCloudSnapshot(user.id),
+      getSubscriptionPreview(user.id),
+    ])
+
+    setCloudProfile(profile || null)
+    setMealHistory(captures || [])
+    setAuthEmail(user.email || authEmail)
+    setServiceState((previous) => ({
+      ...previous,
+      cloud: 'Supabase account is connected and ready to sync.',
+      subscriptions: subscription.offeringsReady ? 'RevenueCat offerings are ready.' : previous.subscriptions,
+    }))
+
+    if (snapshot?.payload?.mobileState) {
+      setState((previous) => ({
+        ...previous,
+        ...snapshot.payload.mobileState,
+      }))
+    }
+  }, [authEmail])
 
   useEffect(() => {
     let mounted = true
@@ -122,35 +186,56 @@ export default function App() {
   const todayKey = new Date().toISOString().slice(0, 10)
   const checkins = state.reminders.checkins[todayKey] || { morning: false, evening: false }
   const smartChef = state.subscription.plan === 'pro' ? state.calories.smartChef : state.calories.smartChef.slice(0, 1)
-
-  function patchState(updater) {
-    setState((previous) => updater(previous))
-  }
-
-  const hydrateCloudState = useCallback(async (user) => {
-    const [profile, captures, snapshot, subscription] = await Promise.all([
-      fetchCloudProfile(user.id),
-      fetchMealCaptures(user.id, { limit: 12 }),
-      pullCloudSnapshot(user.id),
-      getSubscriptionPreview(user.id),
-    ])
-
-    setCloudProfile(profile || null)
-    setMealHistory(captures || [])
-    setAuthEmail(user.email || authEmail)
-    setServiceState((previous) => ({
-      ...previous,
-      cloud: 'Supabase account is connected and ready to sync.',
-      subscriptions: subscription.offeringsReady ? 'RevenueCat offerings are ready.' : previous.subscriptions,
-    }))
-
-    if (snapshot?.payload?.mobileState) {
-      setState((previous) => ({
-        ...previous,
-        ...snapshot.payload.mobileState,
-      }))
-    }
-  }, [authEmail])
+  const completedHabits = state.habits.filter((habit) => habit.done).length
+  const bestHabitStreak = Math.max(...state.habits.map((habit) => habit.streak))
+  const caloriesLeft = state.calories.target - state.calories.consumed
+  const activeReminders = Number(state.reminders.morningCheckIn) + Number(state.reminders.eveningCheckIn) + Number(state.reminders.pushReminders)
+  const heroContent = {
+    habits: {
+      eyebrow: 'One week rhythm',
+      title: 'Tiny wins feel better when the screen stays calm.',
+      body: 'The loop stays small: one tap, one habit, one softer return tomorrow.',
+      tag: `${completedHabits}/${state.habits.length} done`,
+      stats: [
+        { label: 'best streak', value: `${bestHabitStreak}d` },
+        { label: 'sleep', value: `${state.sleep.today}h` },
+        { label: 'check-ins', value: `${Number(checkins.morning) + Number(checkins.evening)}/2` },
+      ],
+    },
+    calories: {
+      eyebrow: 'Calorie lane',
+      title: 'Photo, voice, and edits should feel like one natural flow.',
+      body: 'Capture first, confirm second, then let the app remember what matters for next time.',
+      tag: `${caloriesLeft} left`,
+      stats: [
+        { label: 'protein', value: `${state.calories.macros.protein}g` },
+        { label: 'favorites', value: `${state.calories.favorites.length}` },
+        { label: 'cloud meals', value: `${mealHistory.length}` },
+      ],
+    },
+    insights: {
+      eyebrow: 'Momentum signal',
+      title: 'A good insights screen should calm the mind, not judge the day.',
+      body: 'We highlight what is working so the product feels like support, not pressure.',
+      tag: `${state.insights.weekScore}/100`,
+      stats: [
+        { label: 'sleep hits', value: `${state.insights.sleepHits}` },
+        { label: 'best streak', value: `${state.insights.bestStreak}d` },
+        { label: 'plan', value: state.subscription.plan },
+      ],
+    },
+    settings: {
+      eyebrow: 'Account space',
+      title: 'Keep the operational stuff in one clean place.',
+      body: 'Notifications, account, subscriptions, and app preferences live here without getting in the way.',
+      tag: cloudUser ? 'connected' : 'local',
+      stats: [
+        { label: 'meals synced', value: `${mealHistory.length}` },
+        { label: 'reminders', value: `${activeReminders}` },
+        { label: 'auth', value: cloudUser ? 'live' : 'idle' },
+      ],
+    },
+  }[tab]
 
   function toggleHabit(id) {
     patchState((previous) => ({
@@ -530,15 +615,30 @@ export default function App() {
       <ExpoStatusBar style="dark" />
       <StatusBar barStyle="dark-content" />
       <View style={styles.container}>
+        <View pointerEvents="none" style={styles.backdropOrbTop} />
+        <View pointerEvents="none" style={styles.backdropOrbBottom} />
         <View style={styles.topBar}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.eyebrow}>MOMENTUM MOBILE</Text>
-            <Text style={styles.screenTitle}>{MOBILE_TABS.find((item) => item.id === tab)?.label}</Text>
-            <Text style={styles.copy}>{state.profile.intention}</Text>
+          <View style={styles.brandRow}>
+            <AvatarBadge name={cloudProfile?.display_name || state.profile.name} />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.brandEyebrow}>Momentum mobile</Text>
+              <Text style={styles.brandTitle}>{MOBILE_TABS.find((item) => item.id === tab)?.label}</Text>
+            </View>
           </View>
-          <Pill accent>{state.subscription.plan === 'pro' ? 'Pro' : 'Free'}</Pill>
+          <View style={styles.topActions}>
+            <Pill>{cloudUser ? 'sync on' : 'local'}</Pill>
+            <Pill accent>{state.subscription.plan === 'pro' ? 'Pro' : 'Free'}</Pill>
+          </View>
         </View>
         <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
+          <HeroPanel
+            eyebrow={heroContent.eyebrow}
+            title={heroContent.title}
+            body={heroContent.body}
+            stats={heroContent.stats}
+            tag={heroContent.tag}
+          />
+
           {tab === 'habits' ? (
             <>
               <Card eyebrow="RETURN LOOP" title="Daily check-ins" right={<Pill accent>{Number(checkins.morning) + Number(checkins.evening)}/2 done</Pill>}>
@@ -560,6 +660,10 @@ export default function App() {
                     <View style={{ flex: 1 }}>
                       <Text style={styles.itemTitle}>{habit.name}</Text>
                       <Text style={styles.itemBody}>{habit.cue}</Text>
+                      <View style={styles.inlineMetaRow}>
+                        <Pill>{habit.streak} day streak</Pill>
+                        <Text style={styles.metaCopy}>{habit.done ? 'closed with one tap' : 'still open for today'}</Text>
+                      </View>
                     </View>
                     <Pill>{habit.done ? 'closed' : 'open'}</Pill>
                   </Pressable>
@@ -633,6 +737,20 @@ export default function App() {
               </Card>
 
               <Card eyebrow="CONFIRM" title={analysis.summary} right={<Pill accent>{analysis.totalCalories || 0} kcal</Pill>}>
+                <View style={styles.metricRow}>
+                  <View style={styles.metricCard}>
+                    <Text style={styles.metricLabel}>Protein</Text>
+                    <Text style={styles.metricValue}>{analysis.totalMacros?.protein || 0} g</Text>
+                  </View>
+                  <View style={styles.metricCard}>
+                    <Text style={styles.metricLabel}>Carbs</Text>
+                    <Text style={styles.metricValue}>{analysis.totalMacros?.carbs || 0} g</Text>
+                  </View>
+                  <View style={styles.metricCard}>
+                    <Text style={styles.metricLabel}>Fat</Text>
+                    <Text style={styles.metricValue}>{analysis.totalMacros?.fat || 0} g</Text>
+                  </View>
+                </View>
                 {(analysis.foods || []).map((food, index) => (
                   <View key={food.id || index} style={styles.editorCard}>
                     <TextInput style={styles.input} value={food.name} onChangeText={(value) => updateFood(index, 'name', value)} />
@@ -668,6 +786,7 @@ export default function App() {
               <Card eyebrow="SMART CHEF" title="Close the day well" right={<Pill>{state.subscription.plan === 'pro' ? 'Pro' : 'Preview'}</Pill>}>
                 {smartChef.map((item) => (
                   <View key={item} style={styles.softCard}>
+                    <Text style={styles.recipeChip}>smart chef</Text>
                     <Text style={styles.itemTitle}>{item}</Text>
                   </View>
                 ))}
@@ -687,6 +806,10 @@ export default function App() {
                 {(mealHistory.length ? mealHistory : []).map((meal) => (
                   <View key={meal.id} style={styles.softCard}>
                     {meal.imageUrl ? <Image source={{ uri: meal.imageUrl }} style={styles.historyImage} /> : null}
+                    <View style={styles.inlineMetaRow}>
+                      <Pill>{meal.source}</Pill>
+                      <Text style={styles.metaCopy}>{meal.provider || 'analysis'}</Text>
+                    </View>
                     <Text style={styles.itemTitle}>{meal.summary}</Text>
                     <Text style={styles.itemBody}>{meal.total_calories || 0} kcal</Text>
                     <Text style={styles.itemBody}>P {meal.total_macros?.protein || 0} / F {meal.total_macros?.fat || 0} / C {meal.total_macros?.carbs || 0}</Text>
@@ -928,13 +1051,70 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: THEME.bg,
   },
+  backdropOrbTop: {
+    position: 'absolute',
+    top: -40,
+    right: -10,
+    width: 190,
+    height: 190,
+    borderRadius: 999,
+    backgroundColor: THEME.roseSoft,
+  },
+  backdropOrbBottom: {
+    position: 'absolute',
+    bottom: 140,
+    left: -50,
+    width: 180,
+    height: 180,
+    borderRadius: 999,
+    backgroundColor: THEME.violetSoft,
+  },
   topBar: {
     paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 12,
+    paddingTop: 14,
+    paddingBottom: 8,
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 12,
+  },
+  brandRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  brandEyebrow: {
+    fontSize: 11,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    color: THEME.muted,
+    fontWeight: '700',
+  },
+  brandTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: THEME.ink,
+    marginTop: 3,
+  },
+  topActions: {
+    gap: 8,
+    alignItems: 'flex-end',
+  },
+  avatarBadge: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: THEME.accentSoft,
+    borderWidth: 1,
+    borderColor: 'rgba(241, 115, 55, 0.18)',
+  },
+  avatarInitial: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: THEME.accentDeep,
   },
   screenTitle: {
     fontSize: 28,
@@ -960,15 +1140,102 @@ const styles = StyleSheet.create({
     paddingBottom: 120,
     gap: 18,
   },
+  heroPanel: {
+    position: 'relative',
+    overflow: 'hidden',
+    borderRadius: 32,
+    padding: 20,
+    gap: 16,
+    backgroundColor: THEME.card,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    shadowColor: THEME.shadow,
+    shadowOpacity: 0.16,
+    shadowRadius: 24,
+    shadowOffset: { width: 0, height: 16 },
+    elevation: 5,
+  },
+  heroGlowPrimary: {
+    position: 'absolute',
+    top: -22,
+    right: -18,
+    width: 120,
+    height: 120,
+    borderRadius: 999,
+    backgroundColor: THEME.roseSoft,
+  },
+  heroGlowSecondary: {
+    position: 'absolute',
+    bottom: -34,
+    left: -16,
+    width: 130,
+    height: 130,
+    borderRadius: 999,
+    backgroundColor: THEME.violetSoft,
+  },
+  heroHeader: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'flex-start',
+  },
+  heroEyebrow: {
+    fontSize: 11,
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    color: THEME.muted,
+    fontWeight: '700',
+  },
+  heroTitle: {
+    marginTop: 8,
+    fontSize: 31,
+    lineHeight: 35,
+    fontWeight: '800',
+    color: THEME.ink,
+    maxWidth: '94%',
+  },
+  heroBody: {
+    marginTop: 10,
+    fontSize: 15,
+    lineHeight: 22,
+    color: THEME.muted,
+  },
+  heroStats: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  heroStat: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.78)',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    borderWidth: 1,
+    borderColor: THEME.border,
+    gap: 6,
+  },
+  heroStatValue: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: THEME.ink,
+  },
+  heroStatLabel: {
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
+    fontWeight: '700',
+    color: THEME.muted,
+  },
   card: {
     backgroundColor: THEME.card,
-    borderRadius: 28,
+    borderRadius: 30,
     padding: 18,
     gap: 16,
+    borderWidth: 1,
+    borderColor: THEME.border,
     shadowColor: THEME.shadow,
     shadowOpacity: 0.12,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 14 },
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 12 },
     elevation: 4,
   },
   head: {
@@ -987,11 +1254,14 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: THEME.surface,
+    backgroundColor: 'rgba(255,255,255,0.86)',
     alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: THEME.border,
   },
   pillAccent: {
     backgroundColor: THEME.accentSoft,
+    borderColor: 'rgba(241, 115, 55, 0.18)',
   },
   pillText: {
     fontSize: 12,
@@ -1014,7 +1284,7 @@ const styles = StyleSheet.create({
     backgroundColor: THEME.accent,
   },
   buttonGhost: {
-    backgroundColor: THEME.surface,
+    backgroundColor: 'rgba(255,255,255,0.7)',
     borderWidth: 1,
     borderColor: THEME.border,
   },
@@ -1033,10 +1303,32 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   softCard: {
-    borderRadius: 22,
+    borderRadius: 24,
     padding: 16,
-    backgroundColor: THEME.surface,
+    backgroundColor: THEME.surfaceSoft,
+    borderWidth: 1,
+    borderColor: THEME.border,
     gap: 8,
+  },
+  inlineMetaRow: {
+    marginTop: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  metaCopy: {
+    fontSize: 12,
+    color: THEME.muted,
+    fontWeight: '600',
+  },
+  recipeChip: {
+    alignSelf: 'flex-start',
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 1.2,
+    color: THEME.accentDeep,
+    fontWeight: '800',
   },
   cameraShell: {
     borderRadius: 24,
@@ -1053,15 +1345,18 @@ const styles = StyleSheet.create({
     backgroundColor: THEME.successSoft,
   },
   listRow: {
-    borderRadius: 22,
+    borderRadius: 24,
     padding: 16,
-    backgroundColor: THEME.surface,
+    backgroundColor: THEME.surfaceSoft,
+    borderWidth: 1,
+    borderColor: THEME.border,
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 12,
   },
   listRowDone: {
     backgroundColor: THEME.accentSoft,
+    borderColor: 'rgba(241, 115, 55, 0.18)',
   },
   itemTitle: {
     fontSize: 17,
@@ -1082,7 +1377,9 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 22,
     padding: 14,
-    backgroundColor: THEME.surface,
+    backgroundColor: THEME.surfaceSoft,
+    borderWidth: 1,
+    borderColor: THEME.border,
     gap: 6,
   },
   metricLabel: {
@@ -1111,7 +1408,9 @@ const styles = StyleSheet.create({
   editorCard: {
     borderRadius: 24,
     padding: 14,
-    backgroundColor: THEME.surface,
+    backgroundColor: THEME.surfaceSoft,
+    borderWidth: 1,
+    borderColor: THEME.border,
     gap: 10,
   },
   previewImage: {
@@ -1161,7 +1460,9 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    backgroundColor: THEME.surface,
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    borderWidth: 1,
+    borderColor: THEME.border,
   },
   segmentActive: {
     backgroundColor: THEME.accent,
@@ -1179,9 +1480,11 @@ const styles = StyleSheet.create({
     left: 16,
     right: 16,
     bottom: 18,
-    borderRadius: 28,
+    borderRadius: 30,
     padding: 8,
-    backgroundColor: 'rgba(255,255,255,0.94)',
+    backgroundColor: 'rgba(255,255,255,0.92)',
+    borderWidth: 1,
+    borderColor: THEME.border,
     flexDirection: 'row',
     gap: 8,
     shadowColor: THEME.shadow,
@@ -1204,6 +1507,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
     color: THEME.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
   tabLabelActive: {
     color: THEME.accent,
