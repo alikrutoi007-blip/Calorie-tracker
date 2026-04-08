@@ -95,6 +95,23 @@ This creates:
 - `meal_captures`
 - private `meal-captures` storage bucket
 
+### 2.5. Recommended CLI flow
+
+Use the scripts already wired into `package.json`:
+
+```bash
+npm run supabase:login
+npm run supabase:link
+npm run supabase:db:push
+npm run supabase:functions:deploy
+```
+
+If you want a full local Supabase stack for development:
+
+```bash
+npm run supabase:start
+```
+
 ### 3. Deploy the edge function
 
 The function template lives in:
@@ -113,6 +130,12 @@ Function secrets expected by the backend:
 - optional `EDAMAM_APP_KEY`
 - optional `NUTRITIONIX_APP_ID`
 - optional `NUTRITIONIX_APP_KEY`
+
+Template for function secrets:
+
+```text
+supabase/functions/.env.example
+```
 
 ### 4. Product behavior after setup
 

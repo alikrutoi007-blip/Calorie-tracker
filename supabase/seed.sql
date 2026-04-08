@@ -1,0 +1,1 @@
+-- Keep this file so `supabase db reset` and local environments stay predictable.
