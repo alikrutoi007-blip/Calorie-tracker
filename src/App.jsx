@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
+import { clearAppState, loadAppState, saveAppState } from './lib/appDb';
 
 const STORAGE_KEY = 'momentum-ios-v3';
 const LEGACY_STORAGE_KEY = 'nutriapp-command-center-v2';
@@ -141,9 +142,44 @@ function normalizeJournalEntry(entry) {
   };
 }
 
-function loadState() {
+function normalizeState(parsed) {
   const fallback = createDefaultState();
   const todayKey = formatDateKey(new Date());
+
+  if (!parsed || typeof parsed !== 'object') return fallback;
+
+  const calorieEntries = parsed?.calories?.entries && typeof parsed.calories.entries === 'object'
+    ? parsed.calories.entries
+    : {};
+
+  if (!Object.keys(calorieEntries).length && Number.isFinite(Number(parsed?.calories?.consumed))) {
+    calorieEntries[todayKey] = Number(parsed.calories.consumed);
+  }
+
+  const habits = Array.isArray(parsed?.habits) ? parsed.habits.map(normalizeHabit) : [];
+  const journal = Array.isArray(parsed?.journal) ? parsed.journal.map(normalizeJournalEntry) : [];
+  const hasData = habits.length || journal.length || Object.keys(calorieEntries).length || Object.keys(parsed?.sleep?.entries || {}).length;
+
+  return {
+    profile: {
+      name: parsed?.profile?.name || '',
+      intention: parsed?.profile?.intention || '',
+      onboardingComplete: typeof parsed?.profile?.onboardingComplete === 'boolean'
+        ? parsed.profile.onboardingComplete
+        : Boolean(hasData),
+    },
+    habits,
+    calories: { target: Number(parsed?.calories?.target) || DEFAULT_CALORIE_TARGET, entries: calorieEntries },
+    sleep: {
+      target: Number(parsed?.sleep?.target) || DEFAULT_SLEEP_TARGET,
+      entries: parsed?.sleep?.entries && typeof parsed.sleep.entries === 'object' ? parsed.sleep.entries : {},
+    },
+    journal,
+  };
+}
+
+function loadState() {
+  const fallback = createDefaultState();
 
   if (typeof window === 'undefined') return fallback;
 
@@ -151,35 +187,7 @@ function loadState() {
     const raw = window.localStorage.getItem(STORAGE_KEY) || window.localStorage.getItem(LEGACY_STORAGE_KEY);
     if (!raw) return fallback;
 
-    const parsed = JSON.parse(raw);
-    const calorieEntries = parsed?.calories?.entries && typeof parsed.calories.entries === 'object'
-      ? parsed.calories.entries
-      : {};
-
-    if (!Object.keys(calorieEntries).length && Number.isFinite(Number(parsed?.calories?.consumed))) {
-      calorieEntries[todayKey] = Number(parsed.calories.consumed);
-    }
-
-    const habits = Array.isArray(parsed?.habits) ? parsed.habits.map(normalizeHabit) : [];
-    const journal = Array.isArray(parsed?.journal) ? parsed.journal.map(normalizeJournalEntry) : [];
-    const hasData = habits.length || journal.length || Object.keys(calorieEntries).length || Object.keys(parsed?.sleep?.entries || {}).length;
-
-    return {
-      profile: {
-        name: parsed?.profile?.name || '',
-        intention: parsed?.profile?.intention || '',
-        onboardingComplete: typeof parsed?.profile?.onboardingComplete === 'boolean'
-          ? parsed.profile.onboardingComplete
-          : Boolean(hasData),
-      },
-      habits,
-      calories: { target: Number(parsed?.calories?.target) || DEFAULT_CALORIE_TARGET, entries: calorieEntries },
-      sleep: {
-        target: Number(parsed?.sleep?.target) || DEFAULT_SLEEP_TARGET,
-        entries: parsed?.sleep?.entries && typeof parsed.sleep.entries === 'object' ? parsed.sleep.entries : {},
-      },
-      journal,
-    };
+    return normalizeState(JSON.parse(raw));
   } catch (error) {
     console.error('Unable to load app state', error);
     return fallback;
@@ -462,6 +470,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('habits');
   const [selectedDateKey, setSelectedDateKey] = useState(formatDateKey(new Date()));
   const [showOnboarding, setShowOnboarding] = useState(() => !loadState().profile.onboardingComplete);
+  const [hasHydratedDb, setHasHydratedDb] = useState(false);
   const [onboardingDraft, setOnboardingDraft] = useState({
     name: '',
     intention: '',
@@ -486,14 +495,51 @@ export default function App() {
     providerHint: 'Ready for a real AI meal pipeline: capture, parse, confirm, save.',
     lastSource: '',
   });
+  const initialDateKeyRef = useRef(selectedDateKey);
 
   const weekDays = useMemo(() => getRecentDays(RHYTHM_DAYS), []);
   const todayKey = weekDays[weekDays.length - 1]?.key || formatDateKey(new Date());
   const selectedDay = weekDays.find((day) => day.key === selectedDateKey) || weekDays[weekDays.length - 1];
 
   useEffect(() => {
+    let isCancelled = false;
+
+    async function hydrateFromDb() {
+      try {
+        const databaseState = await loadAppState();
+        if (!databaseState || isCancelled) {
+          setHasHydratedDb(true);
+          return;
+        }
+
+        const normalized = normalizeState(databaseState);
+        setState(normalized);
+        setShowOnboarding(!normalized.profile.onboardingComplete);
+        const currentEntry = normalized.journal.find((entry) => entry.dateKey === initialDateKeyRef.current);
+        setJournalDraft(currentEntry?.text || '');
+      } catch (error) {
+        console.error('Unable to hydrate app database', error);
+      } finally {
+        if (!isCancelled) setHasHydratedDb(true);
+      }
+    }
+
+    hydrateFromDb();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [state]);
+
+    if (!hasHydratedDb) return;
+
+    saveAppState(state).catch((error) => {
+      console.error('Unable to save app database', error);
+    });
+  }, [hasHydratedDb, state]);
 
   useEffect(() => () => {
     recognitionRef.current?.stop?.();
@@ -847,6 +893,9 @@ export default function App() {
 
     window.localStorage.removeItem(STORAGE_KEY);
     window.localStorage.removeItem(LEGACY_STORAGE_KEY);
+    clearAppState().catch((error) => {
+      console.error('Unable to clear app database', error);
+    });
     setState(createDefaultState());
     setShowOnboarding(true);
     selectDate(todayKey);
