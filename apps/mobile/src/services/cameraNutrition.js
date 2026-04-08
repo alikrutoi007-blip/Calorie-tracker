@@ -1,16 +1,60 @@
-import Constants from 'expo-constants'
+import { getMobileAccessToken, getMobileSupabaseClient, getMobileSupabaseKey, getMobileSupabaseUrl } from './supabase'
 
-function getEdgeConfig() {
-  return {
-    url: Constants.expoConfig?.extra?.supabaseUrl || '',
-    key: Constants.expoConfig?.extra?.supabasePublishableKey || '',
-  }
+const MEAL_CAPTURE_BUCKET = 'meal-captures'
+
+function sanitizeFilename(filename) {
+  return filename.toLowerCase().replace(/[^a-z0-9.\-_]+/g, '-')
 }
 
-export async function analyzeMealWithEdgePreview(payload) {
-  const config = getEdgeConfig()
+async function fileUriToBlob(uri) {
+  const response = await fetch(uri)
+  if (!response.ok) {
+    throw new Error('The selected file could not be opened from the device cache.')
+  }
 
-  if (!config.url || !config.key) {
+  return response.blob()
+}
+
+async function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(new Error('The selected file could not be converted for analysis.'))
+    reader.onloadend = () => resolve(reader.result)
+    reader.readAsDataURL(blob)
+  })
+}
+
+export async function buildDataUrlFromUri(uri) {
+  const blob = await fileUriToBlob(uri)
+  return blobToDataUrl(blob)
+}
+
+export async function uploadMealPhoto({ userId, uri, fileName = 'meal.jpg', mimeType = 'image/jpeg' }) {
+  const client = getMobileSupabaseClient()
+  if (!client || !userId) return ''
+
+  const extension = fileName.includes('.') ? fileName.split('.').pop() : 'jpg'
+  const path = `${userId}/${Date.now()}-${sanitizeFilename(fileName || `meal.${extension}`)}`
+  const fileBlob = await fileUriToBlob(uri)
+
+  const { data, error } = await client.storage
+    .from(MEAL_CAPTURE_BUCKET)
+    .upload(path, fileBlob, {
+      contentType: mimeType,
+      cacheControl: '3600',
+      upsert: false,
+    })
+
+  if (error) throw error
+  return data.path
+}
+
+export async function analyzeMealWithEdge(payload) {
+  const url = getMobileSupabaseUrl()
+  const key = getMobileSupabaseKey()
+  const token = await getMobileAccessToken()
+
+  if (!url || !key) {
     return {
       status: 'preview',
       summary: 'Preview meal analysis',
@@ -28,15 +72,69 @@ export async function analyzeMealWithEdgePreview(payload) {
     }
   }
 
-  const response = await fetch(`${config.url}/functions/v1/analyze-meal`, {
+  const response = await fetch(`${url}/functions/v1/analyze-meal`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      apikey: config.key,
-      Authorization: `Bearer ${config.key}`,
+      apikey: key,
+      Authorization: `Bearer ${token || key}`,
     },
     body: JSON.stringify(payload),
   })
 
-  return response.json()
+  const data = await response.json()
+
+  if (!response.ok || data.status === 'error') {
+    throw new Error(data.message || 'Meal analysis failed in the edge function.')
+  }
+
+  return data
+}
+
+export async function analyzeCapturedMeal({
+  mealText,
+  photoUri,
+  photoName,
+  photoMimeType,
+  audioUri,
+  audioMimeType,
+  locale,
+  dateKey,
+  userId,
+}) {
+  const transcript = mealText?.trim() || ''
+  const source = photoUri ? 'photo' : audioUri ? 'voice' : 'manual'
+
+  let imageDataUrl = ''
+  let storagePath = ''
+  let audioDataUrl = ''
+
+  if (photoUri) {
+    imageDataUrl = await buildDataUrlFromUri(photoUri)
+
+    if (userId) {
+      storagePath = await uploadMealPhoto({
+        userId,
+        uri: photoUri,
+        fileName: photoName || 'meal.jpg',
+        mimeType: photoMimeType || 'image/jpeg',
+      })
+    }
+  }
+
+  if (audioUri) {
+    audioDataUrl = await buildDataUrlFromUri(audioUri)
+  }
+
+  return analyzeMealWithEdge({
+    source,
+    transcript,
+    imageDataUrl: imageDataUrl || undefined,
+    imageName: photoName || undefined,
+    storagePath: storagePath || undefined,
+    audioDataUrl: audioDataUrl || undefined,
+    audioMimeType: audioMimeType || undefined,
+    locale: locale || 'en-US',
+    dateKey,
+  })
 }

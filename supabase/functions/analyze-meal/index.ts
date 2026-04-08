@@ -7,6 +7,8 @@ type MealRequest = {
   imageDataUrl?: string;
   imageName?: string;
   storagePath?: string;
+  audioDataUrl?: string;
+  audioMimeType?: string;
   locale?: string;
   dateKey?: string;
 };
@@ -291,6 +293,41 @@ function mergeFoods(parsedFoods: ParsedFood[] = [], nutritionFoods: NutritionFoo
   });
 }
 
+async function transcribeAudioDataUrl(audioDataUrl: string, mimeType: string | undefined, apiKey: string, locale: string | undefined) {
+  const fileResponse = await fetch(audioDataUrl);
+  if (!fileResponse.ok) {
+    throw new Error('Audio data could not be read for transcription.');
+  }
+
+  const audioBlob = await fileResponse.blob();
+  const formData = new FormData();
+  formData.append('file', new File([audioBlob], `meal-note.${mimeType?.includes('wav') ? 'wav' : 'm4a'}`, {
+    type: mimeType || audioBlob.type || 'audio/mp4',
+  }));
+  formData.append('model', Deno.env.get('OPENAI_TRANSCRIBE_MODEL') || 'gpt-4o-mini-transcribe');
+  formData.append('response_format', 'json');
+
+  if (locale) {
+    formData.append('language', locale.slice(0, 2));
+  }
+
+  const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`OpenAI transcription failed: ${text}`);
+  }
+
+  const payload = await response.json();
+  return String(payload.text || '').trim();
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -325,9 +362,17 @@ Deno.serve(async (req) => {
       return json({ status: 'setup_required', message: 'OPENAI_API_KEY is missing for meal analysis.' });
     }
 
-    const parsed = await callOpenAIForMealShape(body, openAiKey);
+    const transcribedAudio = body.audioDataUrl
+      ? await transcribeAudioDataUrl(body.audioDataUrl, body.audioMimeType, openAiKey, body.locale)
+      : '';
+    const effectiveTranscript = [body.transcript || '', transcribedAudio].filter(Boolean).join('. ').trim();
+
+    const parsed = await callOpenAIForMealShape({
+      ...body,
+      transcript: effectiveTranscript,
+    }, openAiKey);
     const lines = (parsed.foods || []).map((food) => `${food.quantityText || '1 serving'} ${food.name || 'meal item'}`.trim());
-    const nutritionQuery = lines.join(', ') || body.transcript || parsed.summary || '';
+    const nutritionQuery = lines.join(', ') || effectiveTranscript || parsed.summary || '';
     const nutrition = await getNutritionWithNutritionix(nutritionQuery)
       || await getNutritionWithEdamam(lines)
       || buildOpenAiOnlyNutrition(parsed);
@@ -345,7 +390,7 @@ Deno.serve(async (req) => {
           user_id: user.id,
           source: body.source,
           summary: parsed.summary || 'Meal captured',
-          transcript: body.transcript || null,
+          transcript: effectiveTranscript || null,
           image_name: body.imageName || null,
           storage_path: body.storagePath || null,
           provider: nutrition.provider,
@@ -357,6 +402,7 @@ Deno.serve(async (req) => {
             nutrition: nutrition.raw,
             locale: body.locale,
             dateKey: body.dateKey,
+            transcript: effectiveTranscript,
             analysis: {
               totalMacros,
               glycemicNote: parsed.glycemicNote || '',
@@ -385,6 +431,7 @@ Deno.serve(async (req) => {
       energyForecast: parsed.energyForecast || '',
       coachNote: parsed.coachNote || '',
       foods: mergedFoods,
+      transcript: effectiveTranscript,
       savedId,
     });
   } catch (error) {

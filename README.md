@@ -82,6 +82,7 @@ From the repo root:
 
 ```bash
 npm run mobile:start
+npm run mobile:prebuild
 ```
 
 Or inside `apps/mobile`:
@@ -97,6 +98,12 @@ For a real iPhone-native step, prefer a dev build:
 cd apps/mobile
 npx expo prebuild
 npx expo run:ios
+```
+
+On Windows, `expo run:ios` will not build a local iOS app. Use the cloud path instead:
+
+```bash
+npm run mobile:ios:cloud
 ```
 
 ## Planned native path

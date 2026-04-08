@@ -1,10 +1,13 @@
-import React, { useEffect, useState } from 'react'
-import { Alert, Pressable, SafeAreaView, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, View } from 'react-native'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { Alert, Image, Pressable, SafeAreaView, ScrollView, StatusBar, StyleSheet, Switch, Text, TextInput, View } from 'react-native'
+import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder, useAudioRecorderState } from 'expo-audio'
+import { CameraView, useCameraPermissions } from 'expo-camera'
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar'
-import { analyzeMealWithEdgePreview } from './src/services/cameraNutrition'
+import { analyzeCapturedMeal } from './src/services/cameraNutrition'
+import { fetchCloudProfile, fetchMealCaptures, getCloudSession, onCloudAuthChange, pullCloudSnapshot, pushCloudSnapshot, signInWithPassword, signOutFromCloud, signUpWithPassword, updateCloudProfile } from './src/services/cloudSync'
 import { connectHealthkitPreview, getHealthkitSnapshotPreview } from './src/services/healthkit'
 import { requestMomentumNotifications, scheduleMomentumReminderPair } from './src/services/notifications'
-import { getSubscriptionPreview, startSubscriptionCheckoutPreview } from './src/services/subscriptions'
+import { configureSubscriptions, getSubscriptionPreview, startSubscriptionCheckout } from './src/services/subscriptions'
 import { getMobileCloudPreview } from './src/services/supabase'
 import { MOBILE_TABS, SETTINGS_SECTIONS, PREMIUM_FEATURES, createMobileSeedState } from './src/seed'
 import { THEME } from './src/theme'
@@ -42,11 +45,27 @@ function Pill({ children, accent }) {
 
 export default function App() {
   const seed = createMobileSeedState()
+  const cameraRef = useRef(null)
+  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY)
+  const recorderState = useAudioRecorderState(recorder)
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions()
   const [tab, setTab] = useState('habits')
   const [settingsSection, setSettingsSection] = useState('notifications')
   const [state, setState] = useState(seed)
   const [mealText, setMealText] = useState('Chicken rice bowl, sweet tea, one spoon of oil')
   const [analysis, setAnalysis] = useState(seed.calories.analysis)
+  const [mealBusy, setMealBusy] = useState(false)
+  const [authBusy, setAuthBusy] = useState(false)
+  const [authMode, setAuthMode] = useState('signin')
+  const [authEmail, setAuthEmail] = useState(seed.profile.email)
+  const [authPassword, setAuthPassword] = useState('')
+  const [authMessage, setAuthMessage] = useState('Sign in with email and password to sync meals, snapshots and subscriptions.')
+  const [cloudUser, setCloudUser] = useState(null)
+  const [cloudProfile, setCloudProfile] = useState(null)
+  const [mealHistory, setMealHistory] = useState([])
+  const [cameraOpen, setCameraOpen] = useState(false)
+  const [capturedPhoto, setCapturedPhoto] = useState(null)
+  const [voiceClip, setVoiceClip] = useState(null)
   const [serviceState, setServiceState] = useState({
     notifications: 'Permission not requested yet',
     health: 'HealthKit not connected yet',
@@ -59,24 +78,46 @@ export default function App() {
 
     async function bootstrap() {
       const cloud = await getMobileCloudPreview()
-      const subscription = await getSubscriptionPreview()
+      const { user } = await getCloudSession()
+      const subscription = await getSubscriptionPreview(user?.id || '')
       const health = await getHealthkitSnapshotPreview()
 
       if (!mounted) return
 
       setServiceState((previous) => ({
         ...previous,
-        cloud: cloud.configured ? 'Supabase mobile sync is configured.' : previous.cloud,
+        cloud: cloud.configured ? (cloud.signedIn ? 'Supabase mobile sync is connected.' : 'Supabase mobile sync is configured.') : previous.cloud,
         subscriptions: subscription.configured ? 'RevenueCat keys are present.' : previous.subscriptions,
-        health: health.source === 'preview' ? 'HealthKit preview lane is ready for iPhone.' : previous.health,
+        health: health.source === 'preview' ? 'HealthKit preview lane is ready for iPhone.' : 'HealthKit is reading live data.',
       }))
+      setCloudUser(user || null)
+
+      if (user) {
+        await hydrateCloudState(user)
+      }
     }
 
     bootstrap()
+
+    const unsubscribe = onCloudAuthChange(async ({ user }) => {
+      if (!mounted) return
+
+      setCloudUser(user || null)
+
+      if (user) {
+        await hydrateCloudState(user)
+      } else {
+        setCloudProfile(null)
+        setMealHistory([])
+        setAuthMessage('Signed out. Local state stays on device until you sync again.')
+      }
+    })
+
     return () => {
       mounted = false
+      unsubscribe()
     }
-  }, [])
+  }, [hydrateCloudState])
 
   const todayKey = new Date().toISOString().slice(0, 10)
   const checkins = state.reminders.checkins[todayKey] || { morning: false, evening: false }
@@ -85,6 +126,31 @@ export default function App() {
   function patchState(updater) {
     setState((previous) => updater(previous))
   }
+
+  const hydrateCloudState = useCallback(async (user) => {
+    const [profile, captures, snapshot, subscription] = await Promise.all([
+      fetchCloudProfile(user.id),
+      fetchMealCaptures(user.id, { limit: 12 }),
+      pullCloudSnapshot(user.id),
+      getSubscriptionPreview(user.id),
+    ])
+
+    setCloudProfile(profile || null)
+    setMealHistory(captures || [])
+    setAuthEmail(user.email || authEmail)
+    setServiceState((previous) => ({
+      ...previous,
+      cloud: 'Supabase account is connected and ready to sync.',
+      subscriptions: subscription.offeringsReady ? 'RevenueCat offerings are ready.' : previous.subscriptions,
+    }))
+
+    if (snapshot?.payload?.mobileState) {
+      setState((previous) => ({
+        ...previous,
+        ...snapshot.payload.mobileState,
+      }))
+    }
+  }, [authEmail])
 
   function toggleHabit(id) {
     patchState((previous) => ({
@@ -129,6 +195,102 @@ export default function App() {
     }))
   }
 
+  async function handleAuthSubmit() {
+    if (!authEmail.trim() || !authPassword.trim()) {
+      Alert.alert('Account', 'Enter both email and password first.')
+      return
+    }
+
+    setAuthBusy(true)
+
+    try {
+      if (authMode === 'signup') {
+        await signUpWithPassword({
+          email: authEmail.trim(),
+          password: authPassword,
+          displayName: state.profile.name,
+        })
+        setAuthMessage('Account created. If email confirmation is enabled, confirm it once and then sign in.')
+      } else {
+        const result = await signInWithPassword({
+          email: authEmail.trim(),
+          password: authPassword,
+        })
+
+        setCloudUser(result.user || null)
+        setAuthMessage('Signed in. Cloud sync, meal history, and subscriptions are now linked to this account.')
+
+        if (result.user) {
+          await updateCloudProfile(result.user.id, {
+            email: authEmail.trim(),
+            display_name: state.profile.name,
+          })
+          await hydrateCloudState(result.user)
+          await configureSubscriptions(result.user.id)
+        }
+      }
+    } catch (error) {
+      setAuthMessage(error instanceof Error ? error.message : 'Account flow failed.')
+      Alert.alert('Account', error instanceof Error ? error.message : 'Account flow failed.')
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  async function handleSignOut() {
+    try {
+      await signOutFromCloud()
+      setCloudUser(null)
+      setCloudProfile(null)
+      setMealHistory([])
+      setAuthPassword('')
+      setAuthMessage('Signed out. Local phone state is still available.')
+    } catch (error) {
+      Alert.alert('Account', error instanceof Error ? error.message : 'Sign out failed.')
+    }
+  }
+
+  async function syncNow() {
+    if (!cloudUser) {
+      Alert.alert('Sync', 'Sign in first to push this phone state to Supabase.')
+      return
+    }
+
+    try {
+      await updateCloudProfile(cloudUser.id, {
+        email: cloudUser.email || authEmail.trim(),
+        display_name: state.profile.name,
+      })
+      await pushCloudSnapshot(cloudUser.id, { mobileState: state })
+      setAuthMessage('Phone state synced to Supabase.')
+      await hydrateCloudState(cloudUser)
+    } catch (error) {
+      Alert.alert('Sync', error instanceof Error ? error.message : 'Sync failed.')
+    }
+  }
+
+  async function restoreFromCloud() {
+    if (!cloudUser) {
+      Alert.alert('Restore', 'Sign in first to restore the latest cloud snapshot.')
+      return
+    }
+
+    try {
+      const snapshot = await pullCloudSnapshot(cloudUser.id)
+      if (snapshot?.payload?.mobileState) {
+        setState((previous) => ({
+          ...previous,
+          ...snapshot.payload.mobileState,
+        }))
+        setAuthMessage('Latest cloud snapshot restored to this device.')
+      } else {
+        setAuthMessage('No cloud snapshot found yet.')
+      }
+    } catch (error) {
+      Alert.alert('Restore', error instanceof Error ? error.message : 'Restore failed.')
+    }
+  }
+
   async function enableNotifications() {
     const result = await requestMomentumNotifications()
     setServiceState((previous) => ({ ...previous, notifications: result.message }))
@@ -144,29 +306,135 @@ export default function App() {
 
   async function connectHealth() {
     const result = await connectHealthkitPreview()
+    const snapshot = await getHealthkitSnapshotPreview()
     setServiceState((previous) => ({ ...previous, health: result.message }))
+    if (snapshot.source === 'healthkit') {
+      patchState((previous) => ({
+        ...previous,
+        sleep: {
+          ...previous.sleep,
+          today: snapshot.sleepHours || previous.sleep.today,
+        },
+        calories: {
+          ...previous.calories,
+          consumed: snapshot.calories || previous.calories.consumed,
+        },
+      }))
+    }
     Alert.alert('HealthKit', result.message)
   }
 
+  async function openCamera() {
+    if (!cameraPermission?.granted) {
+      const permission = await requestCameraPermission()
+      if (!permission.granted) {
+        Alert.alert('Camera', 'Camera permission is needed to capture meals.')
+        return
+      }
+    }
+
+    setCameraOpen(true)
+  }
+
+  async function capturePhoto() {
+    if (!cameraRef.current) return
+
+    try {
+      const picture = await cameraRef.current.takePictureAsync({
+        quality: 0.8,
+      })
+
+      if (picture?.uri) {
+        setCapturedPhoto({
+          uri: picture.uri,
+          fileName: `meal-${Date.now()}.jpg`,
+          mimeType: 'image/jpeg',
+        })
+        setCameraOpen(false)
+      }
+    } catch (error) {
+      Alert.alert('Camera', error instanceof Error ? error.message : 'Photo capture failed.')
+    }
+  }
+
+  async function toggleVoiceRecording() {
+    try {
+      if (recorderState.isRecording) {
+        await recorder.stop()
+        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: false })
+
+        if (recorder.uri) {
+          setVoiceClip({
+            uri: recorder.uri,
+            mimeType: 'audio/mp4',
+          })
+          Alert.alert('Voice note', 'Voice note recorded. It will be transcribed during meal analysis.')
+        }
+        return
+      }
+
+      const permission = await AudioModule.requestRecordingPermissionsAsync()
+      if (!permission.granted) {
+        Alert.alert('Microphone', 'Microphone permission is needed for natural meal notes.')
+        return
+      }
+
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true })
+      await recorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY)
+      recorder.record()
+    } catch (error) {
+      Alert.alert('Microphone', error instanceof Error ? error.message : 'Voice recording failed.')
+    }
+  }
+
   async function analyzeMeal() {
-    const result = await analyzeMealWithEdgePreview({ source: 'manual', transcript: mealText })
-    setAnalysis({
-      summary: result.summary,
-      totalCalories: result.totalCalories,
-      totalMacros: result.totalMacros,
-      foods: result.foods.map((food, index) => ({
-        id: food.id || `${food.name}-${index}`,
-        name: food.name,
-        quantity: food.quantity || food.quantityText || '1 serving',
-        calories: food.calories || 0,
-        protein: food.protein || 0,
-        fat: food.fat || 0,
-        carbs: food.carbs || 0,
-      })),
-      glycemicNote: result.glycemicNote,
-      energyForecast: result.energyForecast,
-    })
-    Alert.alert('Meal analyzed', result.message || 'Review and confirm the meal before saving it.')
+    setMealBusy(true)
+
+    try {
+      const result = await analyzeCapturedMeal({
+        mealText,
+        photoUri: capturedPhoto?.uri,
+        photoName: capturedPhoto?.fileName,
+        photoMimeType: capturedPhoto?.mimeType,
+        audioUri: voiceClip?.uri,
+        audioMimeType: voiceClip?.mimeType,
+        locale: 'en-US',
+        dateKey: todayKey,
+        userId: cloudUser?.id || '',
+      })
+
+      setAnalysis({
+        summary: result.summary,
+        totalCalories: result.totalCalories,
+        totalMacros: result.totalMacros,
+        foods: result.foods.map((food, index) => ({
+          id: food.id || `${food.name}-${index}`,
+          name: food.name,
+          quantity: food.quantity || food.quantityText || '1 serving',
+          calories: food.calories || 0,
+          protein: food.protein || 0,
+          fat: food.fat || 0,
+          carbs: food.carbs || 0,
+        })),
+        glycemicNote: result.glycemicNote,
+        energyForecast: result.energyForecast,
+      })
+
+      if (result.transcript) {
+        setMealText(result.transcript)
+      }
+
+      if (cloudUser) {
+        const captures = await fetchMealCaptures(cloudUser.id, { limit: 12 })
+        setMealHistory(captures || [])
+      }
+
+      Alert.alert('Meal analyzed', result.message || 'Review and confirm the meal before saving it.')
+    } catch (error) {
+      Alert.alert('Meal analysis', error instanceof Error ? error.message : 'Meal analysis failed.')
+    } finally {
+      setMealBusy(false)
+    }
   }
 
   function updateFood(index, field, value) {
@@ -243,8 +511,17 @@ export default function App() {
   }
 
   async function openCheckout() {
-    const result = await startSubscriptionCheckoutPreview()
+    const result = await startSubscriptionCheckout(cloudUser?.id || '')
     setServiceState((previous) => ({ ...previous, subscriptions: result.message }))
+    if (result.ok) {
+      patchState((previous) => ({
+        ...previous,
+        subscription: {
+          ...previous.subscription,
+          plan: 'pro',
+        },
+      }))
+    }
     Alert.alert('Subscriptions', result.message)
   }
 
@@ -312,7 +589,36 @@ export default function App() {
                 <Text style={styles.copy}>Native calorie logging is built around camera, mic and confirmation so the numbers stay editable and trustworthy.</Text>
               </Card>
 
-              <Card eyebrow="CAPTURE" title="Photo + voice + natural language" right={<Pill>Native scaffold</Pill>}>
+              <Card eyebrow="CAPTURE" title="Photo + voice + natural language" right={<Pill>{cloudUser ? 'Cloud-linked' : 'Local only'}</Pill>}>
+                {cameraOpen ? (
+                  <View style={styles.cameraShell}>
+                    <CameraView ref={cameraRef} style={styles.camera} facing="back" />
+                    <View style={styles.buttonRow}>
+                      <Button label="Take photo" onPress={capturePhoto} />
+                      <Button label="Close" onPress={() => setCameraOpen(false)} ghost />
+                    </View>
+                  </View>
+                ) : null}
+
+                {capturedPhoto?.uri ? (
+                  <View style={styles.softCard}>
+                    <Image source={{ uri: capturedPhoto.uri }} style={styles.previewImage} />
+                    <Text style={styles.itemBody}>Meal photo attached and ready for upload to Supabase Storage.</Text>
+                  </View>
+                ) : null}
+
+                <View style={styles.buttonRow}>
+                  <Button label={capturedPhoto ? 'Retake photo' : 'Open camera'} onPress={openCamera} ghost />
+                  <Button label={recorderState.isRecording ? 'Stop voice note' : voiceClip ? 'Re-record voice note' : 'Record voice note'} onPress={toggleVoiceRecording} ghost />
+                </View>
+
+                {voiceClip?.uri ? (
+                  <View style={styles.softCard}>
+                    <Text style={styles.itemTitle}>Voice note attached</Text>
+                    <Text style={styles.itemBody}>Your voice note will be transcribed on the edge function and merged with the meal photo.</Text>
+                  </View>
+                ) : null}
+
                 <TextInput
                   style={styles.input}
                   value={mealText}
@@ -321,7 +627,7 @@ export default function App() {
                   placeholderTextColor={THEME.muted}
                 />
                 <View style={styles.buttonRow}>
-                  <Button label="Analyze meal" onPress={analyzeMeal} />
+                  <Button label={mealBusy ? 'Analyzing...' : 'Analyze meal'} onPress={analyzeMeal} />
                   <Button label="Save favorite" onPress={saveFavorite} ghost />
                 </View>
               </Card>
@@ -375,6 +681,22 @@ export default function App() {
                     <Text style={styles.itemBody}>P {meal.macros.protein} / F {meal.macros.fat} / C {meal.macros.carbs}</Text>
                   </Pressable>
                 ))}
+              </Card>
+
+              <Card eyebrow="CLOUD HISTORY" title="Recent analyzed meals" right={<Pill>{mealHistory.length}</Pill>}>
+                {(mealHistory.length ? mealHistory : []).map((meal) => (
+                  <View key={meal.id} style={styles.softCard}>
+                    {meal.imageUrl ? <Image source={{ uri: meal.imageUrl }} style={styles.historyImage} /> : null}
+                    <Text style={styles.itemTitle}>{meal.summary}</Text>
+                    <Text style={styles.itemBody}>{meal.total_calories || 0} kcal</Text>
+                    <Text style={styles.itemBody}>P {meal.total_macros?.protein || 0} / F {meal.total_macros?.fat || 0} / C {meal.total_macros?.carbs || 0}</Text>
+                  </View>
+                ))}
+                {!mealHistory.length ? (
+                  <View style={styles.softCard}>
+                    <Text style={styles.itemBody}>Sign in and analyze one meal to start a real cloud history.</Text>
+                  </View>
+                ) : null}
               </Card>
             </>
           ) : null}
@@ -488,13 +810,49 @@ export default function App() {
               {settingsSection === 'account' ? (
                 <Card eyebrow="ACCOUNT" title="Cloud identity">
                   <View style={styles.softCard}>
-                    <Text style={styles.itemTitle}>Supabase account sync</Text>
-                    <Text style={styles.itemBody}>Sign in, sync habits and calories, then restore them across devices.</Text>
+                    <Text style={styles.itemTitle}>{cloudUser ? cloudUser.email : 'Supabase account sync'}</Text>
+                    <Text style={styles.itemBody}>{authMessage}</Text>
                   </View>
-                  <View style={styles.softCard}>
-                    <Text style={styles.itemTitle}>Email + password</Text>
-                    <Text style={styles.itemBody}>The web app already has the auth flow. The native layer is prepared to reuse the same backend.</Text>
-                  </View>
+
+                  {!cloudUser ? (
+                    <>
+                      <TextInput
+                        style={styles.input}
+                        value={authEmail}
+                        onChangeText={setAuthEmail}
+                        autoCapitalize="none"
+                        keyboardType="email-address"
+                        placeholder="Email"
+                        placeholderTextColor={THEME.muted}
+                      />
+                      <TextInput
+                        style={styles.input}
+                        value={authPassword}
+                        onChangeText={setAuthPassword}
+                        secureTextEntry
+                        placeholder="Password"
+                        placeholderTextColor={THEME.muted}
+                      />
+                      <View style={styles.buttonRow}>
+                        <Button label={authBusy ? 'Working...' : authMode === 'signup' ? 'Create account' : 'Sign in'} onPress={handleAuthSubmit} />
+                        <Button label={authMode === 'signup' ? 'Use sign in' : 'Use sign up'} onPress={() => setAuthMode((previous) => previous === 'signup' ? 'signin' : 'signup')} ghost />
+                      </View>
+                    </>
+                  ) : (
+                    <View style={styles.buttonRow}>
+                      <Button label="Sync now" onPress={syncNow} />
+                      <Button label="Restore latest" onPress={restoreFromCloud} ghost />
+                    </View>
+                  )}
+
+                  {cloudProfile ? (
+                    <View style={styles.softCard}>
+                      <Text style={styles.itemTitle}>{cloudProfile.display_name || state.profile.name}</Text>
+                      <Text style={styles.itemBody}>Profile synced at {new Date(cloudProfile.updated_at).toLocaleString()}</Text>
+                    </View>
+                  ) : null}
+
+                  {cloudUser ? <Button label="Sign out" onPress={handleSignOut} ghost /> : null}
                 </Card>
               ) : null}
 
@@ -538,7 +896,11 @@ export default function App() {
                     <Text style={styles.itemTitle}>Current plan: {state.subscription.plan}</Text>
                     <Text style={styles.itemBody}>Use Free for the daily loop, unlock Pro for smarter nutrition coaching and deeper device integrations.</Text>
                   </View>
-                  <Button label="Open RevenueCat preview" onPress={openCheckout} />
+                  <View style={styles.softCard}>
+                    <Text style={styles.itemTitle}>RevenueCat + App Store Connect</Text>
+                    <Text style={styles.itemBody}>On Windows, build iOS in the cloud with EAS. Local `expo run:ios` will never work outside macOS.</Text>
+                  </View>
+                  <Button label="Open RevenueCat checkout" onPress={openCheckout} />
                 </Card>
               ) : null}
             </>
@@ -676,6 +1038,17 @@ const styles = StyleSheet.create({
     backgroundColor: THEME.surface,
     gap: 8,
   },
+  cameraShell: {
+    borderRadius: 24,
+    overflow: 'hidden',
+    gap: 10,
+  },
+  camera: {
+    width: '100%',
+    height: 260,
+    borderRadius: 24,
+    overflow: 'hidden',
+  },
   successCard: {
     backgroundColor: THEME.successSoft,
   },
@@ -740,6 +1113,19 @@ const styles = StyleSheet.create({
     padding: 14,
     backgroundColor: THEME.surface,
     gap: 10,
+  },
+  previewImage: {
+    width: '100%',
+    height: 180,
+    borderRadius: 18,
+    backgroundColor: THEME.bgSoft,
+  },
+  historyImage: {
+    width: '100%',
+    height: 140,
+    borderRadius: 18,
+    backgroundColor: THEME.bgSoft,
+    marginBottom: 4,
   },
   editorGrid: {
     flexDirection: 'row',

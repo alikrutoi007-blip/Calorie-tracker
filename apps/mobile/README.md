@@ -20,13 +20,14 @@ Fill these env values before testing cloud or subscriptions:
 
 - Habits, calories, insights, and settings tabs
 - local reminder flow with `expo-notifications`
-- Supabase mobile config reader
-- RevenueCat preview setup
-- HealthKit preview lane for a later iPhone dev build
+- email/password Supabase auth lane with session persistence
+- real camera + voice capture path for meal analysis
+- RevenueCat product and checkout scaffolding
+- HealthKit lane for an iPhone dev build
 
 ### What still needs native wiring
 
-- real camera and photo capture
-- microphone / speech capture
-- HealthKit bridge in a custom dev build
-- App Store Connect products and RevenueCat offerings
+- install dependencies with `npm install`
+- run `npx expo prebuild` from this folder, not from the repo parent
+- on Windows use `eas build -p ios --profile preview` instead of `expo run:ios`
+- add App Store Connect products and RevenueCat offerings
