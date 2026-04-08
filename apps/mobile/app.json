@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Momentum",
+    "slug": "momentum-mobile",
+    "scheme": "momentum",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "platforms": ["ios", "android"],
+    "plugins": ["expo-notifications"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.momentum.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Momentum uses the camera to scan meals and estimate calories and macros.",
+        "NSMicrophoneUsageDescription": "Momentum uses the microphone so you can describe meals naturally while logging food.",
+        "NSHealthShareUsageDescription": "Momentum can read sleep and nutrition data to keep your daily rhythm in sync.",
+        "NSHealthUpdateUsageDescription": "Momentum can write selected wellness data back to Health when you confirm it.",
+        "NSUserNotificationsUsageDescription": "Momentum uses notifications for gentle morning and evening check-ins."
+      },
+      "entitlements": {
+        "com.apple.developer.healthkit": true
+      }
+    },
+    "extra": {
+      "projectStage": "native-scaffold",
+      "supabaseUrl": "",
+      "supabasePublishableKey": "",
+      "revenueCatApiKeyIos": ""
+    }
+  }
+}

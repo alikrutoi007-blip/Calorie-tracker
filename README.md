@@ -3,6 +3,8 @@
 Momentum is an iPhone-first habit and nutrition app prototype built with Vite and React.
 It is designed around low-friction daily return loops: one-tap habits, a 7-day rhythm, calorie tracking, sleep logging, insights, and a bottom journal.
 
+The repository now also includes an Expo mobile workspace in `apps/mobile` for the native iPhone path.
+
 ## Current product scope
 
 - Habit tracker with edit and delete flows
@@ -43,20 +45,76 @@ This web build is tuned for:
 - Add to Home Screen mode
 - safe-area aware bottom navigation
 
+## Expo mobile workspace
+
+The native scaffold lives in:
+
+```text
+apps/mobile
+```
+
+It includes:
+
+- Expo app shell and EAS config
+- iPhone-first tabs for Habits, Calories, Insights, and Settings
+- local reminder scaffolding with `expo-notifications`
+- HealthKit preview lane for a later custom dev build
+- Supabase mobile env hooks
+- RevenueCat preview wiring for subscriptions
+
+### Mobile env
+
+Copy:
+
+```bash
+cp apps/mobile/.env.example apps/mobile/.env
+```
+
+Fill:
+
+- `EXPO_PUBLIC_SUPABASE_URL`
+- `EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY`
+
+### Run the mobile app
+
+From the repo root:
+
+```bash
+npm run mobile:start
+```
+
+Or inside `apps/mobile`:
+
+```bash
+npm install
+npm run start
+```
+
+For a real iPhone-native step, prefer a dev build:
+
+```bash
+cd apps/mobile
+npx expo prebuild
+npx expo run:ios
+```
+
 ## Planned native path
 
-The web version already prepares the product flow for:
+The mobile scaffold already prepares the product flow for:
 
 - photo-based calorie capture
 - voice meal logging
+- local reminder notifications
 - future HealthKit sync
 - Expo / App Store migration
 
 Recommended next step for production iPhone features:
 
-1. Migrate this UI to Expo / React Native.
-2. Add native speech, camera, and HealthKit bridges.
-3. Connect a nutrition pipeline for food recognition and calorie estimation.
+1. Add `expo-camera` or a custom camera layer for real photo capture.
+2. Add native speech and microphone capture for hybrid meal logging.
+3. Ship a custom iOS dev build and wire HealthKit.
+4. Connect RevenueCat products to App Store Connect.
 
 ## Supabase setup
 

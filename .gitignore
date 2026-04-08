@@ -15,6 +15,9 @@ dist-ssr
 .env.*
 !.env.example
 supabase/.temp
+apps/mobile/.expo
+apps/mobile/android
+apps/mobile/ios
 
 # Editor directories and files
 .vscode/*
