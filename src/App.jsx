@@ -88,6 +88,12 @@ const APP_SETTINGS = [
     label: 'Daily nudges',
     description: 'Keep the interface gently encouraging instead of silent.',
   },
+  {
+    section: 'app',
+    key: 'installPrompts',
+    label: 'Install prompts',
+    description: 'Remind the user to add Momentum to the Home Screen when it helps.',
+  },
 ];
 
 const EMAIL_SETTINGS = [
@@ -148,6 +154,40 @@ const SETTINGS_SECTIONS = [
     icon: 'workspace_premium',
   },
 ];
+
+const SUBSCRIPTION_PLANS = [
+  {
+    id: 'free',
+    label: 'Free',
+    price: '$0',
+    note: 'Core habits, calories and journal',
+  },
+  {
+    id: 'pro',
+    label: 'Momentum Pro',
+    price: '$7.99/mo',
+    note: 'Deeper AI nutrition, smarter reminders and native iPhone layer',
+  },
+];
+
+const PREMIUM_FEATURES = [
+  'Advanced Smart Chef suggestions',
+  'AI-powered reminder tone and timing',
+  'Health sync and native iPhone integrations',
+  'Deeper meal editing and saved food intelligence',
+];
+
+const NATIVE_LANE_FEATURES = [
+  'Add to Home Screen / PWA install',
+  'Camera capture optimized for iPhone',
+  'Microphone capture with native-ready path',
+  'HealthKit and push layer reserved for Expo build',
+];
+
+const RETURN_PROMPTS = {
+  morning: 'Open the day with one tiny action: water, plan, or breakfast check-in.',
+  evening: 'Close the loop softly: log dinner, save one note, then stop for today.',
+};
 
 const ACHIEVEMENT_LIBRARY = [
   {
@@ -330,11 +370,17 @@ function createDefaultPreferences() {
       habitCelebrations: true,
       reduceMotion: false,
       dailyNudges: true,
+      installPrompts: true,
     },
     email: {
       securityAlerts: true,
       weeklyDigest: true,
       productUpdates: false,
+    },
+    notifications: {
+      pushReminders: false,
+      morningCheckIn: true,
+      eveningCheckIn: true,
     },
   };
 }
@@ -347,6 +393,9 @@ function createDefaultState() {
     habits: [],
     calories: { target: DEFAULT_CALORIE_TARGET, proteinTarget: 140, entries: {}, macros: {} },
     sleep: { target: DEFAULT_SLEEP_TARGET, entries: {} },
+    retention: { morningHour: 9, eveningHour: 20, checkins: {} },
+    foodLibrary: { favorites: [] },
+    subscription: { plan: 'free', billing: 'monthly', startedAt: null },
     journal: [],
   };
 }
@@ -373,6 +422,9 @@ function normalizePreferences(preferences) {
       dailyNudges: typeof preferences?.app?.dailyNudges === 'boolean'
         ? preferences.app.dailyNudges
         : fallback.app.dailyNudges,
+      installPrompts: typeof preferences?.app?.installPrompts === 'boolean'
+        ? preferences.app.installPrompts
+        : fallback.app.installPrompts,
     },
     email: {
       securityAlerts: typeof preferences?.email?.securityAlerts === 'boolean'
@@ -384,6 +436,17 @@ function normalizePreferences(preferences) {
       productUpdates: typeof preferences?.email?.productUpdates === 'boolean'
         ? preferences.email.productUpdates
         : fallback.email.productUpdates,
+    },
+    notifications: {
+      pushReminders: typeof preferences?.notifications?.pushReminders === 'boolean'
+        ? preferences.notifications.pushReminders
+        : fallback.notifications.pushReminders,
+      morningCheckIn: typeof preferences?.notifications?.morningCheckIn === 'boolean'
+        ? preferences.notifications.morningCheckIn
+        : fallback.notifications.morningCheckIn,
+      eveningCheckIn: typeof preferences?.notifications?.eveningCheckIn === 'boolean'
+        ? preferences.notifications.eveningCheckIn
+        : fallback.notifications.eveningCheckIn,
     },
   };
 }
@@ -419,6 +482,63 @@ function normalizeJournalEntry(entry) {
   };
 }
 
+function normalizeFavoriteMeal(meal) {
+  if (!meal || typeof meal !== 'object') return null;
+
+  return {
+    id: meal.id || uid(),
+    summary: meal.summary || meal.title || 'Saved meal',
+    source: meal.source || 'favorite',
+    foods: Array.isArray(meal.foods)
+      ? meal.foods.map((food) => ({
+          name: food?.name || 'meal item',
+          quantityText: food?.quantityText || '1 serving',
+          calories: Number(food?.calories) || 0,
+          protein: Number(food?.protein) || 0,
+          fat: Number(food?.fat) || 0,
+          carbs: Number(food?.carbs) || 0,
+        }))
+      : [],
+    totalCalories: Number(meal.totalCalories) || 0,
+    totalMacros: normalizeMacroEntry(meal.totalMacros),
+    createdAt: meal.createdAt || new Date().toISOString(),
+    lastUsedAt: meal.lastUsedAt || null,
+    note: meal.note || '',
+  };
+}
+
+function sumFoods(foods) {
+  const normalizedFoods = Array.isArray(foods) ? foods : [];
+  const totalCalories = normalizedFoods.reduce((total, food) => total + (Number(food?.calories) || 0), 0);
+  const totalMacros = normalizedFoods.reduce(
+    (totals, food) => ({
+      protein: totals.protein + (Number(food?.protein) || 0),
+      fat: totals.fat + (Number(food?.fat) || 0),
+      carbs: totals.carbs + (Number(food?.carbs) || 0),
+    }),
+    { protein: 0, fat: 0, carbs: 0 },
+  );
+
+  return {
+    totalCalories: clamp(Math.round(totalCalories), 0, 10000),
+    totalMacros: normalizeMacroEntry(totalMacros),
+  };
+}
+
+function normalizeCheckins(checkins) {
+  if (!checkins || typeof checkins !== 'object') return {};
+
+  return Object.fromEntries(
+    Object.entries(checkins).map(([dateKey, value]) => [
+      dateKey,
+      {
+        morning: Boolean(value?.morning),
+        evening: Boolean(value?.evening),
+      },
+    ]),
+  );
+}
+
 function normalizeState(parsed) {
   const fallback = createDefaultState();
   const todayKey = formatDateKey(new Date());
@@ -433,6 +553,10 @@ function normalizeState(parsed) {
         Object.entries(parsed.calories.macros).map(([key, value]) => [key, normalizeMacroEntry(value)]),
       )
     : {};
+  const favorites = Array.isArray(parsed?.foodLibrary?.favorites)
+    ? parsed.foodLibrary.favorites.map(normalizeFavoriteMeal).filter(Boolean)
+    : [];
+  const retentionCheckins = normalizeCheckins(parsed?.retention?.checkins);
 
   if (!Object.keys(calorieEntries).length && Number.isFinite(Number(parsed?.calories?.consumed))) {
     calorieEntries[todayKey] = Number(parsed.calories.consumed);
@@ -462,6 +586,19 @@ function normalizeState(parsed) {
     sleep: {
       target: Number(parsed?.sleep?.target) || DEFAULT_SLEEP_TARGET,
       entries: parsed?.sleep?.entries && typeof parsed.sleep.entries === 'object' ? parsed.sleep.entries : {},
+    },
+    retention: {
+      morningHour: clamp(Number(parsed?.retention?.morningHour) || 9, 5, 12),
+      eveningHour: clamp(Number(parsed?.retention?.eveningHour) || 20, 16, 23),
+      checkins: retentionCheckins,
+    },
+    foodLibrary: {
+      favorites,
+    },
+    subscription: {
+      plan: parsed?.subscription?.plan === 'pro' ? 'pro' : 'free',
+      billing: parsed?.subscription?.billing === 'yearly' ? 'yearly' : 'monthly',
+      startedAt: parsed?.subscription?.startedAt || null,
     },
     journal,
   };
@@ -996,10 +1133,15 @@ export default function App() {
   const [bursts, setBursts] = useState([]);
   const [isHabitSheetOpen, setHabitSheetOpen] = useState(false);
   const [isProfileSheetOpen, setProfileSheetOpen] = useState(false);
+  const [installPromptEvent, setInstallPromptEvent] = useState(null);
+  const [notificationPermission, setNotificationPermission] = useState(
+    typeof Notification === 'undefined' ? 'unsupported' : Notification.permission,
+  );
   const [habitDraft, setHabitDraft] = useState(createHabitDraft());
   const photoInputRef = useRef(null);
   const manualNoteInputRef = useRef(null);
   const recognitionRef = useRef(null);
+  const reminderTimerRef = useRef([]);
   const [captureState, setCaptureState] = useState({
     photoName: '',
     photoDataUrl: '',
@@ -1007,6 +1149,7 @@ export default function App() {
     voiceStatus: 'idle',
     voiceTranscript: '',
     manualNote: '',
+    barcodeValue: '',
     providerHint: 'Ready for a real AI meal pipeline: capture, parse, confirm, save.',
     lastSource: '',
   });
@@ -1061,6 +1204,7 @@ export default function App() {
     error: '',
     result: null,
   });
+  const [deviceNotice, setDeviceNotice] = useState('');
   const [isCloudBootstrapping, setIsCloudBootstrapping] = useState(false);
   const latestStateRef = useRef(state);
   const recoveryNotice = 'Recovery link verified. Set a new password to finish signing back in.';
@@ -1113,6 +1257,78 @@ export default function App() {
   useEffect(() => () => {
     recognitionRef.current?.stop?.();
   }, []);
+
+  useEffect(() => {
+    function handleBeforeInstallPrompt(event) {
+      event.preventDefault();
+      setInstallPromptEvent(event);
+    }
+
+    function handleAppInstalled() {
+      setInstallPromptEvent(null);
+      setDeviceNotice('Momentum is installed. Open it from your Home Screen for the most native feel.');
+    }
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  useEffect(() => {
+    reminderTimerRef.current.forEach((timerId) => window.clearTimeout(timerId));
+    reminderTimerRef.current = [];
+
+    if (
+      notificationPermission !== 'granted'
+      || !state.preferences.notifications.pushReminders
+    ) {
+      return undefined;
+    }
+
+    const reminderConfig = [
+      state.preferences.notifications.morningCheckIn
+        ? { key: 'morning', hour: state.retention.morningHour, title: 'Momentum morning check-in', body: RETURN_PROMPTS.morning }
+        : null,
+      state.preferences.notifications.eveningCheckIn
+        ? { key: 'evening', hour: state.retention.eveningHour, title: 'Momentum evening check-in', body: RETURN_PROMPTS.evening }
+        : null,
+    ].filter(Boolean);
+
+    reminderConfig.forEach((item) => {
+      const now = new Date();
+      const target = new Date();
+      target.setHours(item.hour, 0, 0, 0);
+      if (target <= now) target.setDate(target.getDate() + 1);
+      const delay = target.getTime() - now.getTime();
+      const timerId = window.setTimeout(() => {
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          new Notification(item.title, {
+            body: item.body,
+            tag: `momentum-${item.key}`,
+            icon: '/momentum-icon.svg',
+            badge: '/momentum-icon.svg',
+          });
+        }
+      }, delay);
+      reminderTimerRef.current.push(timerId);
+    });
+
+    return () => {
+      reminderTimerRef.current.forEach((timerId) => window.clearTimeout(timerId));
+      reminderTimerRef.current = [];
+    };
+  }, [
+    notificationPermission,
+    state.preferences.notifications.eveningCheckIn,
+    state.preferences.notifications.morningCheckIn,
+    state.preferences.notifications.pushReminders,
+    state.retention.eveningHour,
+    state.retention.morningHour,
+  ]);
 
   async function refreshMealHistory(userId) {
     if (!userId) {
@@ -1320,6 +1536,7 @@ export default function App() {
 
   const selectedHabitCount = countHabitsForDay(state.habits, selectedDateKey);
   const todayHabitCount = countHabitsForDay(state.habits, todayKey);
+  const selectedCheckins = state.retention.checkins?.[selectedDateKey] || { morning: false, evening: false };
   const totalHabits = state.habits.length;
   const bestStreak = totalHabits ? Math.max(...state.habits.map((habit) => computeStreak(habit.history))) : 0;
   const weeklyProgress = weekDays.map((day) => ({
@@ -1446,6 +1663,22 @@ export default function App() {
   const analyzedMacros = normalizeMacroEntry(analysisState.result?.totalMacros);
   const metabolicNote = analysisState.result?.glycemicNote || analysisState.result?.coachNote || '';
   const energyPrediction = analysisState.result?.energyForecast || '';
+  const favoriteMeals = state.foodLibrary.favorites || [];
+  const recentMealTemplates = mealHistory
+    .slice(0, 4)
+    .map((meal) => ({
+      id: meal.id,
+      summary: meal.summary || meal.transcript || meal.image_name || 'Recent meal',
+      foods: Array.isArray(meal.foods) ? meal.foods : [],
+      totalCalories: Number(meal.total_calories) || 0,
+      totalMacros: normalizeMacroEntry(meal.total_macros),
+      source: 'recent',
+      createdAt: meal.created_at || new Date().toISOString(),
+    }));
+  const isPro = state.subscription.plan === 'pro';
+  const visibleSmartChefIdeas = isPro ? smartChefIdeas : smartChefIdeas.slice(0, 1);
+  const installSupported = Boolean(installPromptEvent) || !isStandalone;
+  const checkInCompletion = Number(selectedCheckins.morning) + Number(selectedCheckins.evening);
 
   useEffect(() => {
     if (!cloudState.user || !hasHydratedDb || isCloudBootstrapping) return undefined;
@@ -1777,6 +2010,233 @@ export default function App() {
             providerHint: 'Typed meal note is ready. Add a photo or voice note too if you want tighter estimates.',
           }
         : {}),
+      ...(field === 'barcodeValue' && value.trim()
+        ? {
+            lastSource: previous.lastSource || 'manual',
+            providerHint: 'Fallback search is ready. Combine it with photo or voice if the meal needs more detail.',
+          }
+        : {}),
+    }));
+  }
+
+  function updateReminderHour(period, value) {
+    const parsedValue = Number(value);
+    const fallback = period === 'morning' ? 9 : 20;
+    setState((previous) => ({
+      ...previous,
+      retention: {
+        ...previous.retention,
+        [`${period}Hour`]: !Number.isFinite(parsedValue)
+          ? fallback
+          : clamp(Math.round(parsedValue), period === 'morning' ? 5 : 16, period === 'morning' ? 12 : 23),
+      },
+    }));
+  }
+
+  function toggleCheckIn(period) {
+    setState((previous) => ({
+      ...previous,
+      retention: {
+        ...previous.retention,
+        checkins: {
+          ...previous.retention.checkins,
+          [selectedDateKey]: {
+            morning: Boolean(previous.retention.checkins?.[selectedDateKey]?.morning),
+            evening: Boolean(previous.retention.checkins?.[selectedDateKey]?.evening),
+            [period]: !previous.retention.checkins?.[selectedDateKey]?.[period],
+          },
+        },
+      },
+    }));
+  }
+
+  async function requestNotificationAccess() {
+    if (typeof Notification === 'undefined') {
+      setNotificationPermission('unsupported');
+      setDeviceNotice('This browser does not support notifications. The installable app or native iPhone build will handle reminders better.');
+      return;
+    }
+
+    const permission = await Notification.requestPermission();
+    setNotificationPermission(permission);
+
+    if (permission === 'granted') {
+      setState((previous) => ({
+        ...previous,
+        preferences: {
+          ...previous.preferences,
+          notifications: {
+            ...previous.preferences.notifications,
+            pushReminders: true,
+          },
+        },
+      }));
+      setDeviceNotice('Notifications are enabled. Momentum can now send gentle return prompts while the app is open or installed.');
+    } else {
+      setDeviceNotice('Notifications stayed blocked. You can still use in-app check-ins and Home Screen mode.');
+    }
+  }
+
+  function sendTestNotification() {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+      setDeviceNotice('Enable notifications first, then the test reminder will work.');
+      return;
+    }
+
+    new Notification('Momentum test reminder', {
+      body: 'Tiny step, not a perfect day. Open the app and close one small loop.',
+      tag: 'momentum-test',
+      icon: '/momentum-icon.svg',
+      badge: '/momentum-icon.svg',
+    });
+  }
+
+  async function promptInstallApp() {
+    if (installPromptEvent?.prompt) {
+      await installPromptEvent.prompt();
+      const choiceResult = await installPromptEvent.userChoice;
+      setDeviceNotice(
+        choiceResult?.outcome === 'accepted'
+          ? 'Momentum install started. Open it from the Home Screen for a more app-like feel.'
+          : 'Install prompt dismissed. You can still add it later from the browser menu.',
+      );
+      setInstallPromptEvent(null);
+      return;
+    }
+
+    setDeviceNotice(
+      isStandalone
+        ? 'Momentum is already running from the Home Screen.'
+        : 'On iPhone Safari tap Share and choose Add to Home Screen for the cleanest app-like experience.',
+    );
+  }
+
+  function updateAnalysisFood(index, field, value) {
+    setAnalysisState((previous) => {
+      if (!previous.result) return previous;
+
+      const foods = (previous.result.foods || []).map((food, foodIndex) => {
+        if (foodIndex !== index) return food;
+
+        if (['calories', 'protein', 'fat', 'carbs'].includes(field)) {
+          return {
+            ...food,
+            [field]: clamp(Number(value) || 0, 0, 5000),
+          };
+        }
+
+        return {
+          ...food,
+          [field]: value,
+        };
+      });
+
+      const totals = sumFoods(foods);
+      return {
+        ...previous,
+        result: {
+          ...previous.result,
+          foods,
+          totalCalories: totals.totalCalories,
+          totalMacros: totals.totalMacros,
+        },
+      };
+    });
+  }
+
+  function saveAnalysisToFavorites() {
+    if (!analysisState.result) return;
+
+    const favorite = normalizeFavoriteMeal({
+      id: uid(),
+      summary: analysisState.result.summary || 'Saved meal',
+      source: analysisState.result.provider || 'ai',
+      foods: analysisState.result.foods,
+      totalCalories: analysisState.result.totalCalories || 0,
+      totalMacros: analysisState.result.totalMacros,
+      createdAt: new Date().toISOString(),
+      note: captureState.manualNote,
+    });
+
+    setState((previous) => ({
+      ...previous,
+      foodLibrary: {
+        ...previous.foodLibrary,
+        favorites: [
+          favorite,
+          ...previous.foodLibrary.favorites.filter((item) => item.summary !== favorite.summary).slice(0, 11),
+        ],
+      },
+    }));
+  }
+
+  function removeFavoriteMeal(favoriteId) {
+    setState((previous) => ({
+      ...previous,
+      foodLibrary: {
+        ...previous.foodLibrary,
+        favorites: previous.foodLibrary.favorites.filter((item) => item.id !== favoriteId),
+      },
+    }));
+  }
+
+  function applyMealTemplate(template, mode = 'add') {
+    if (!template) return;
+
+    const totals = {
+      totalCalories: clamp(Number(template.totalCalories) || 0, 0, 10000),
+      totalMacros: normalizeMacroEntry(template.totalMacros),
+    };
+
+    setState((previous) => {
+      const currentCalories = Number(previous.calories.entries?.[selectedDateKey]) || 0;
+      const currentMacros = normalizeMacroEntry(previous.calories.macros?.[selectedDateKey]);
+      return {
+        ...previous,
+        calories: {
+          ...previous.calories,
+          entries: {
+            ...previous.calories.entries,
+            [selectedDateKey]: mode === 'replace' ? totals.totalCalories : clamp(currentCalories + totals.totalCalories, 0, 10000),
+          },
+          macros: {
+            ...previous.calories.macros,
+            [selectedDateKey]: mode === 'replace' ? totals.totalMacros : addMacroEntries(currentMacros, totals.totalMacros),
+          },
+        },
+        foodLibrary: {
+          ...previous.foodLibrary,
+          favorites: previous.foodLibrary.favorites.map((item) =>
+            item.id === template.id ? { ...item, lastUsedAt: new Date().toISOString() } : item,
+          ),
+        },
+      };
+    });
+
+    setCaptureState((previous) => ({
+      ...previous,
+      providerHint: `${template.summary || 'Saved meal'} applied to ${selectedDayLabel.toLowerCase()}.`,
+    }));
+  }
+
+  function toggleSubscriptionPlan(plan) {
+    setState((previous) => ({
+      ...previous,
+      subscription: {
+        ...previous.subscription,
+        plan,
+        startedAt: plan === 'pro' ? previous.subscription.startedAt || new Date().toISOString() : null,
+      },
+    }));
+  }
+
+  function toggleSubscriptionBilling(billing) {
+    setState((previous) => ({
+      ...previous,
+      subscription: {
+        ...previous.subscription,
+        billing,
+      },
     }));
   }
 
@@ -2192,7 +2652,11 @@ export default function App() {
   }
 
   async function runMealAnalysis() {
-    const combinedTranscript = [captureState.voiceTranscript.trim(), captureState.manualNote.trim()].filter(Boolean).join('. ');
+    const combinedTranscript = [
+      captureState.voiceTranscript.trim(),
+      captureState.manualNote.trim(),
+      captureState.barcodeValue.trim() ? `Barcode or fallback search: ${captureState.barcodeValue.trim()}` : '',
+    ].filter(Boolean).join('. ');
     if (!captureState.photoDataUrl && !combinedTranscript) {
       setAnalysisState({
         status: 'error',
@@ -2471,6 +2935,47 @@ export default function App() {
                 <small>Keep it tiny. One tap should be enough to close the loop.</small>
               </div>
 
+              <div className="return-lane">
+                {[
+                  {
+                    key: 'morning',
+                    title: 'Morning check-in',
+                    body: 'Open the day with one intentional action before everything gets noisy.',
+                    done: selectedCheckins.morning,
+                  },
+                  {
+                    key: 'evening',
+                    title: 'Evening closure',
+                    body: 'Close the day softly with one log, one note or one completed loop.',
+                    done: selectedCheckins.evening,
+                  },
+                ].map((item) => (
+                  <article key={item.key} className={['return-card', item.done ? 'is-complete' : ''].filter(Boolean).join(' ')}>
+                    <div>
+                      <span className="eyebrow">{item.key === 'morning' ? 'AM LOOP' : 'PM LOOP'}</span>
+                      <strong>{item.title}</strong>
+                      <p>{item.body}</p>
+                    </div>
+
+                    <button type="button" className={item.done ? 'ghost-button' : 'primary-button'} onClick={() => toggleCheckIn(item.key)}>
+                      {item.done ? 'Done' : 'Check in'}
+                    </button>
+                  </article>
+                ))}
+              </div>
+
+              <div className="return-toolbar">
+                <span className="metric-pill">{checkInCompletion}/2 check-ins</span>
+                <div className="sync-actions">
+                  <button type="button" className="ghost-button" onClick={requestNotificationAccess}>
+                    {notificationPermission === 'granted' ? 'Notifications on' : 'Enable reminders'}
+                  </button>
+                  <button type="button" className="ghost-button" onClick={promptInstallApp}>
+                    {isStandalone ? 'Home Screen live' : 'Install app'}
+                  </button>
+                </div>
+              </div>
+
               <div className="habit-list">
                 {state.habits.length ? (
                   state.habits.map((habit) => (
@@ -2740,9 +3245,24 @@ export default function App() {
                   />
                 </label>
 
+                <label className="field">
+                  <span>Barcode or manual search fallback</span>
+                  <input
+                    type="text"
+                    value={captureState.barcodeValue}
+                    onChange={(event) => updateCaptureField('barcodeValue', event.target.value)}
+                    placeholder="Barcode digits or quick search like greek yogurt 2%"
+                  />
+                </label>
+
                 <div className="capture-status-line">
                   <span className="material-symbols-outlined">edit_note</span>
                   <p>{captureState.manualNote.trim() || 'Typed meal details will appear here if you want to log food without camera or mic.'}</p>
+                </div>
+
+                <div className="capture-status-line">
+                  <span className="material-symbols-outlined">barcode_scanner</span>
+                  <p>{captureState.barcodeValue.trim() || 'Barcode or manual search fallback can rescue the log when camera recognition is uncertain.'}</p>
                 </div>
 
                 <p className="capture-note">{captureState.providerHint}</p>
@@ -2752,6 +3272,7 @@ export default function App() {
                 <span className="provider-pill">OpenAI vision + natural language</span>
                 <span className="provider-pill">Supabase edge function</span>
                 <span className="provider-pill">BJU + glycemic insight</span>
+                <span className="provider-pill">Barcode/manual fallback</span>
               </div>
 
               <div className="sync-actions">
@@ -2799,6 +3320,15 @@ export default function App() {
                     <span>estimated kcal</span>
                   </div>
 
+                  <div className="sync-actions">
+                    <button type="button" className="ghost-button" onClick={applyAnalyzedCalories}>
+                      Replace day total
+                    </button>
+                    <button type="button" className="ghost-button" onClick={saveAnalysisToFavorites}>
+                      Save to favorites
+                    </button>
+                  </div>
+
                   <div className="macro-summary-grid analysis-macro-grid">
                     {formatMacros(analyzedMacros).map((macro) => (
                       <article key={macro.key} className="macro-summary-card">
@@ -2838,13 +3368,36 @@ export default function App() {
                   <div className="analysis-food-list">
                     {analysisState.result.foods?.map((food, index) => (
                       <article key={`${food.name}-${index}`} className="analysis-food">
-                        <strong>{food.name}</strong>
-                        <span>{food.quantityText || 'Serving pending'}</span>
-                        <small>
-                          {Number.isFinite(food.calories) ? `${food.calories} kcal` : 'Needs nutrition provider'}
-                          {' • '}
-                          P {Math.round(food.protein || 0)} / F {Math.round(food.fat || 0)} / C {Math.round(food.carbs || 0)}
-                        </small>
+                        <div className="analysis-food-topline">
+                          <strong>{food.name}</strong>
+                          <span>{food.quantityText || 'Serving pending'}</span>
+                        </div>
+                        <div className="analysis-food-editor">
+                          <label className="field compact-field">
+                            <span>Name</span>
+                            <input type="text" value={food.name || ''} onChange={(event) => updateAnalysisFood(index, 'name', event.target.value)} />
+                          </label>
+                          <label className="field compact-field">
+                            <span>Qty</span>
+                            <input type="text" value={food.quantityText || ''} onChange={(event) => updateAnalysisFood(index, 'quantityText', event.target.value)} />
+                          </label>
+                          <label className="field compact-field">
+                            <span>Kcal</span>
+                            <input type="number" min="0" step="1" value={food.calories || 0} onChange={(event) => updateAnalysisFood(index, 'calories', event.target.value)} />
+                          </label>
+                          <label className="field compact-field">
+                            <span>P</span>
+                            <input type="number" min="0" step="1" value={food.protein || 0} onChange={(event) => updateAnalysisFood(index, 'protein', event.target.value)} />
+                          </label>
+                          <label className="field compact-field">
+                            <span>F</span>
+                            <input type="number" min="0" step="1" value={food.fat || 0} onChange={(event) => updateAnalysisFood(index, 'fat', event.target.value)} />
+                          </label>
+                          <label className="field compact-field">
+                            <span>C</span>
+                            <input type="number" min="0" step="1" value={food.carbs || 0} onChange={(event) => updateAnalysisFood(index, 'carbs', event.target.value)} />
+                          </label>
+                        </div>
                       </article>
                     ))}
                   </div>
@@ -2873,7 +3426,7 @@ export default function App() {
                   <span className="eyebrow">SMART CHEF</span>
                   <h2>What should I eat?</h2>
                 </div>
-                <span className="metric-pill">{Math.max(0, calorieRemaining)} kcal left</span>
+                <span className="metric-pill">{isPro ? 'Pro live' : 'Free preview'}</span>
               </div>
 
               <div className="smart-chef-shell">
@@ -2906,14 +3459,75 @@ export default function App() {
                 </label>
 
                 <div className="insight-stack">
-                  {smartChefIdeas.map((idea) => (
+                  {visibleSmartChefIdeas.map((idea) => (
                     <article key={idea.title} className="insight-line">
                       <strong>{idea.title}</strong>
                       <p>{idea.body}</p>
                     </article>
                   ))}
                 </div>
+
+                {!isPro ? (
+                  <StateCard
+                    compact
+                    tone="warm"
+                    icon="workspace_premium"
+                    eyebrow="PRO LAYER"
+                    title="Unlock deeper Smart Chef"
+                    body="Pro opens more than one suggestion, richer macro closing ideas and the future fridge-to-recipe flow."
+                    actionLabel="Open subscriptions"
+                    onAction={() => openSettingsSection('subscriptions')}
+                  />
+                ) : null}
               </div>
+            </section>
+
+            <section className="section-card">
+              <div className="section-head">
+                <div>
+                  <span className="eyebrow">TRUST LAYER</span>
+                  <h2>Favorites and recent meals</h2>
+                </div>
+                <span className="metric-pill">{favoriteMeals.length} favorites</span>
+              </div>
+
+              {favoriteMeals.length ? (
+                <div className="meal-template-grid">
+                  {favoriteMeals.slice(0, 6).map((meal) => (
+                    <article key={meal.id} className="template-card">
+                      <strong>{meal.summary}</strong>
+                      <p>{meal.totalCalories || 0} kcal • P {meal.totalMacros.protein} / F {meal.totalMacros.fat} / C {meal.totalMacros.carbs}</p>
+                      <div className="sync-actions">
+                        <button type="button" className="ghost-button" onClick={() => applyMealTemplate(meal)}>Add to day</button>
+                        <button type="button" className="ghost-danger" onClick={() => removeFavoriteMeal(meal.id)}>Remove</button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <StateCard
+                  compact
+                  tone="neutral"
+                  icon="favorite"
+                  eyebrow="SAVE THE WINNERS"
+                  title="No favorite meals yet"
+                  body="After AI analyzes a meal, save it here so the next log can be one tap instead of starting from zero."
+                />
+              )}
+
+              {recentMealTemplates.length ? (
+                <div className="meal-template-grid">
+                  {recentMealTemplates.map((meal) => (
+                    <article key={meal.id} className="template-card">
+                      <strong>{meal.summary}</strong>
+                      <p>{meal.totalCalories || 0} kcal • P {meal.totalMacros.protein} / F {meal.totalMacros.fat} / C {meal.totalMacros.carbs}</p>
+                      <button type="button" className="ghost-button" onClick={() => applyMealTemplate(meal)}>
+                        Reuse this meal
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              ) : null}
             </section>
 
             <section className="section-card">
@@ -3105,6 +3719,27 @@ export default function App() {
 
                 <div className="settings-stack">
                   <SettingToggle
+                    label="Push reminders"
+                    description="Allow Momentum to send gentle return prompts."
+                    checked={state.preferences.notifications.pushReminders}
+                    onToggle={() => togglePreference('notifications', 'pushReminders')}
+                  />
+
+                  <SettingToggle
+                    label="Morning check-in"
+                    description="Keep a light morning touchpoint visible."
+                    checked={state.preferences.notifications.morningCheckIn}
+                    onToggle={() => togglePreference('notifications', 'morningCheckIn')}
+                  />
+
+                  <SettingToggle
+                    label="Evening check-in"
+                    description="Close the day with one tiny reflection or meal log."
+                    checked={state.preferences.notifications.eveningCheckIn}
+                    onToggle={() => togglePreference('notifications', 'eveningCheckIn')}
+                  />
+
+                  <SettingToggle
                     label="Daily nudges"
                     description="Keep tiny return-friendly reminders visible inside the app."
                     checked={state.preferences.app.dailyNudges}
@@ -3122,6 +3757,29 @@ export default function App() {
                     />
                   ))}
                 </div>
+
+                <div className="settings-two-up">
+                  <label className="field compact-field">
+                    <span>Morning hour</span>
+                    <input type="number" min="5" max="12" step="1" value={state.retention.morningHour} onChange={(event) => updateReminderHour('morning', event.target.value)} />
+                  </label>
+
+                  <label className="field compact-field">
+                    <span>Evening hour</span>
+                    <input type="number" min="16" max="23" step="1" value={state.retention.eveningHour} onChange={(event) => updateReminderHour('evening', event.target.value)} />
+                  </label>
+                </div>
+
+                <div className="sync-actions">
+                  <button type="button" className="ghost-button" onClick={requestNotificationAccess}>
+                    {notificationPermission === 'granted' ? 'Notification access live' : 'Enable notifications'}
+                  </button>
+                  <button type="button" className="ghost-button" onClick={sendTestNotification}>
+                    Send test reminder
+                  </button>
+                </div>
+
+                {deviceNotice ? <p className="notice-copy">{deviceNotice}</p> : null}
               </section>
             ) : null}
 
@@ -3485,6 +4143,17 @@ export default function App() {
                   ))}
                 </div>
 
+                <div className="native-lane-list">
+                  {NATIVE_LANE_FEATURES.map((feature) => (
+                    <article key={feature} className="insight-line">
+                      <strong>{feature}</strong>
+                      <p>{feature === 'Add to Home Screen / PWA install'
+                        ? (isStandalone ? 'Already running from the Home Screen.' : 'Install prompt and Add to Home Screen instructions are ready.')
+                        : 'Prepared in the product layer so the future Expo build can plug in without redesigning the app.'}</p>
+                    </article>
+                  ))}
+                </div>
+
                 <StateCard
                   compact
                   tone="neutral"
@@ -3493,6 +4162,14 @@ export default function App() {
                   title="The app should feel calm, quick and easy to return to"
                   body="Short loops, less clutter, visible wins and lighter animation help the interface stay usable every day."
                 />
+
+                <div className="sync-actions">
+                  <button type="button" className="ghost-button" onClick={promptInstallApp}>
+                    {isStandalone ? 'Installed on Home Screen' : installSupported ? 'Install Momentum' : 'Add to Home Screen guide'}
+                  </button>
+                </div>
+
+                {deviceNotice ? <p className="notice-copy">{deviceNotice}</p> : null}
 
                 <div className="profile-sheet-actions is-secondary">
                   <button type="button" className="ghost-danger" onClick={resetEverything}>Reset app</button>
@@ -3552,26 +4229,56 @@ export default function App() {
                   compact
                   tone="warm"
                   icon="workspace_premium"
-                  eyebrow="FREE PLAN"
-                  title="Core tracking is already live"
-                  body="Subscriptions will later unlock deeper AI nutrition, native Health sync, advanced insights and premium coaching loops."
+                  eyebrow={isPro ? 'PRO ACTIVE' : 'FREE PLAN'}
+                  title={isPro ? 'Momentum Pro preview is active' : 'Core tracking is already live'}
+                  body={isPro
+                    ? 'Advanced Smart Chef, stronger reminder layer and native-ready perks are now unlocked in this build.'
+                    : 'Subscriptions unlock deeper AI nutrition, native Health sync, advanced insights and premium coaching loops.'}
                 />
 
+                <div className="pricing-grid">
+                  {SUBSCRIPTION_PLANS.map((plan) => (
+                    <article key={plan.id} className={['pricing-card', state.subscription.plan === plan.id ? 'is-active' : ''].filter(Boolean).join(' ')}>
+                      <span className="eyebrow">{plan.label}</span>
+                      <strong>{plan.price}</strong>
+                      <p>{plan.note}</p>
+                      <button
+                        type="button"
+                        className={state.subscription.plan === plan.id ? 'ghost-button' : 'primary-button'}
+                        onClick={() => toggleSubscriptionPlan(plan.id)}
+                      >
+                        {state.subscription.plan === plan.id ? 'Current plan' : plan.id === 'pro' ? 'Start Pro preview' : 'Stay on Free'}
+                      </button>
+                    </article>
+                  ))}
+                </div>
+
+                <div className="auth-mode-row">
+                  <button
+                    type="button"
+                    className={['segment-button', state.subscription.billing === 'monthly' ? 'is-active' : ''].filter(Boolean).join(' ')}
+                    onClick={() => toggleSubscriptionBilling('monthly')}
+                  >
+                    Monthly
+                  </button>
+                  <button
+                    type="button"
+                    className={['segment-button', state.subscription.billing === 'yearly' ? 'is-active' : ''].filter(Boolean).join(' ')}
+                    onClick={() => toggleSubscriptionBilling('yearly')}
+                  >
+                    Yearly
+                  </button>
+                </div>
+
                 <div className="insight-stack">
-                  <article className="insight-line">
-                    <strong>AI nutrition pro</strong>
-                    <p>Richer food analysis, stronger macro suggestions and smarter prompts for fixing the day.</p>
-                  </article>
-
-                  <article className="insight-line">
-                    <strong>Native iPhone layer</strong>
-                    <p>Health sync, better camera and mic integration, and more private device-native experiences.</p>
-                  </article>
-
-                  <article className="insight-line">
-                    <strong>Premium coaching loop</strong>
-                    <p>Actionable nudges, better weekly interpretation and more adaptive habit and meal suggestions.</p>
-                  </article>
+                  {PREMIUM_FEATURES.map((feature) => (
+                    <article key={feature} className="insight-line">
+                      <strong>{feature}</strong>
+                      <p>{state.subscription.plan === 'pro'
+                        ? 'Unlocked in the current build and ready to shape the product direction.'
+                        : 'Reserved for the Pro layer so monetization has clear, meaningful value.'}</p>
+                    </article>
+                  ))}
                 </div>
               </section>
             ) : null}

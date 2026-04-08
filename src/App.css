@@ -778,7 +778,11 @@
 .macro-summary-grid,
 .smart-chef-summary,
 .achievement-grid,
-.analysis-note-stack {
+.analysis-note-stack,
+.return-lane,
+.meal-template-grid,
+.pricing-grid,
+.settings-two-up {
   display: grid;
   gap: 12px;
 }
@@ -786,6 +790,10 @@
 .macro-summary-grid,
 .smart-chef-summary {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.settings-two-up {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .macro-summary-grid {
@@ -798,7 +806,10 @@
 }
 
 .macro-summary-card,
-.achievement-card {
+.achievement-card,
+.return-card,
+.template-card,
+.pricing-card {
   padding: 14px;
   border-radius: 22px;
   border: 1px solid rgba(124, 106, 91, 0.08);
@@ -812,7 +823,10 @@
 }
 
 .macro-summary-card strong,
-.achievement-card strong {
+.achievement-card strong,
+.return-card strong,
+.template-card strong,
+.pricing-card strong {
   display: block;
   margin-top: 6px;
 }
@@ -820,6 +834,45 @@
 .macro-summary-card small {
   display: block;
   margin-top: 6px;
+}
+
+.return-lane,
+.meal-template-grid,
+.pricing-grid {
+  margin-top: 14px;
+}
+
+.return-lane,
+.meal-template-grid,
+.pricing-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.return-card {
+  display: grid;
+  gap: 12px;
+}
+
+.return-card p,
+.template-card p,
+.pricing-card p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.return-card.is-complete {
+  border-color: rgba(21, 113, 84, 0.12);
+  background: linear-gradient(180deg, rgba(240, 255, 248, 0.96), rgba(255, 255, 255, 0.8));
+}
+
+.return-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-top: 14px;
+  flex-wrap: wrap;
 }
 
 .capture-grid,
@@ -1103,6 +1156,32 @@
   margin-top: 4px;
 }
 
+.analysis-food-topline {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.analysis-food-editor {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.compact-field {
+  min-width: 0;
+}
+
+.compact-field span {
+  font-size: 0.68rem;
+}
+
+.compact-field input {
+  min-width: 0;
+}
+
 .analysis-macro-grid {
   margin-top: 0;
 }
@@ -1157,6 +1236,17 @@
   margin: 6px 0 4px;
   font-family: 'Manrope', 'Segoe UI', sans-serif;
   font-size: 1.18rem;
+}
+
+.native-lane-list {
+  display: grid;
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.pricing-card.is-active {
+  border-color: rgba(239, 106, 46, 0.2);
+  background: linear-gradient(180deg, rgba(255, 248, 240, 0.96), rgba(255, 255, 255, 0.82));
 }
 
 .account-summary-card p {
@@ -1873,7 +1963,12 @@ button:disabled {
   .settings-section-grid,
   .macro-summary-grid,
   .smart-chef-summary,
-  .achievement-grid {
+  .achievement-grid,
+  .settings-two-up,
+  .return-lane,
+  .meal-template-grid,
+  .pricing-grid,
+  .analysis-food-editor {
     grid-template-columns: 1fr;
   }
 
@@ -1896,7 +1991,9 @@ button:disabled {
   .meal-topline,
   .meal-meta,
   .meal-macro-line,
-  .achievement-topline {
+  .achievement-topline,
+  .analysis-food-topline,
+  .return-toolbar {
     flex-direction: column;
   }
 
