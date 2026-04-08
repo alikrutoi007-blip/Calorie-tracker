@@ -748,6 +748,109 @@
   font-weight: 700;
 }
 
+.provider-grid,
+.analysis-food-list,
+.sync-shell {
+  display: grid;
+  gap: 12px;
+}
+
+.provider-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 14px;
+}
+
+.provider-pill,
+.sync-note-card,
+.analysis-food {
+  padding: 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(124, 106, 91, 0.08);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.provider-pill {
+  color: var(--muted);
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.sync-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sync-actions > * {
+  min-width: 0;
+}
+
+.sync-copy,
+.sync-note-card p,
+.analysis-error {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.sync-note-card strong,
+.analysis-food strong,
+.analysis-total strong {
+  display: block;
+}
+
+.analysis-card {
+  margin-top: 14px;
+  padding: 16px;
+  border-radius: 24px;
+  border: 1px solid rgba(124, 106, 91, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(255, 248, 242, 0.74));
+}
+
+.analysis-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.analysis-head h3 {
+  margin: 6px 0 0;
+  font-family: 'Manrope', 'Segoe UI', sans-serif;
+  font-size: 1.08rem;
+}
+
+.analysis-total {
+  margin: 14px 0;
+  padding: 14px 16px;
+  border-radius: 22px;
+  background: rgba(239, 106, 46, 0.08);
+}
+
+.analysis-total strong {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.8rem;
+  color: var(--accent);
+}
+
+.analysis-total span,
+.analysis-food span,
+.analysis-food small {
+  color: var(--muted);
+}
+
+.analysis-food span,
+.analysis-food small {
+  display: block;
+  margin-top: 4px;
+}
+
+.analysis-error {
+  color: #be3d17;
+}
+
 .visually-hidden {
   position: absolute;
   width: 1px;
@@ -955,6 +1058,12 @@
   color: #be3d17;
 }
 
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
 .preset-picker {
   margin: 18px 0 20px;
 }
@@ -1133,13 +1242,19 @@
   }
 
   .capture-grid,
-  .capture-flow {
+  .capture-flow,
+  .provider-grid {
     grid-template-columns: 1fr;
   }
 
   .capture-status-head {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .analysis-head,
+  .sync-actions {
+    flex-direction: column;
   }
 
   .chart-card {

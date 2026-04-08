@@ -58,6 +58,69 @@ Recommended next step for production iPhone features:
 2. Add native speech, camera, and HealthKit bridges.
 3. Connect a nutrition pipeline for food recognition and calorie estimation.
 
+## Supabase setup
+
+This project now includes:
+
+- local IndexedDB persistence
+- Supabase auth + cloud snapshot sync scaffolding
+- SQL migration for profiles, app snapshots, meal captures, and private meal image storage
+- an `analyze-meal` edge function template for AI calorie recognition
+
+### 1. Copy environment variables
+
+```bash
+cp .env.example .env.local
+```
+
+Then fill:
+
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_PUBLISHABLE_KEY`
+- `VITE_SUPABASE_MEAL_FUNCTION`
+- `VITE_SITE_URL`
+
+### 2. Create Supabase resources
+
+Run the SQL in:
+
+```text
+supabase/migrations/20260408_init_momentum.sql
+```
+
+This creates:
+
+- `profiles`
+- `app_state_snapshots`
+- `meal_captures`
+- private `meal-captures` storage bucket
+
+### 3. Deploy the edge function
+
+The function template lives in:
+
+```text
+supabase/functions/analyze-meal/index.ts
+```
+
+Function secrets expected by the backend:
+
+- `SUPABASE_URL`
+- `SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `OPENAI_API_KEY`
+- optional `EDAMAM_APP_ID`
+- optional `EDAMAM_APP_KEY`
+- optional `NUTRITIONIX_APP_ID`
+- optional `NUTRITIONIX_APP_KEY`
+
+### 4. Product behavior after setup
+
+- users can connect with an email magic link
+- device state can sync to cloud
+- cloud backup can be restored on another phone
+- calorie photo/voice capture can call the `analyze-meal` function
+
 ## GitHub setup
 
 After creating a new empty GitHub repository, connect it from this folder:

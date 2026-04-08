@@ -1,6 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
 import { clearAppState, loadAppState, saveAppState } from './lib/appDb';
+import {
+  getCloudSession,
+  onCloudAuthChange,
+  pullCloudSnapshot,
+  pushCloudSnapshot,
+  sendMagicLink,
+  signOutFromCloud,
+} from './lib/cloudSync';
+import { analyzeMealCapture } from './lib/mealAnalysis';
+import { isSupabaseConfigured } from './lib/supabaseClient';
 
 const STORAGE_KEY = 'momentum-ios-v3';
 const LEGACY_STORAGE_KEY = 'nutriapp-command-center-v2';
@@ -63,6 +73,15 @@ function formatDateKey(date) {
 
 function formatShortDate(date, options) {
   return new Intl.DateTimeFormat(undefined, options).format(date);
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 }
 
 function getRecentDays(count) {
@@ -490,12 +509,31 @@ export default function App() {
   const recognitionRef = useRef(null);
   const [captureState, setCaptureState] = useState({
     photoName: '',
+    photoDataUrl: '',
     voiceStatus: 'idle',
     voiceTranscript: '',
     providerHint: 'Ready for a real AI meal pipeline: capture, parse, confirm, save.',
     lastSource: '',
   });
   const initialDateKeyRef = useRef(selectedDateKey);
+  const autoSyncTimerRef = useRef(null);
+  const [cloudEmail, setCloudEmail] = useState('');
+  const [cloudState, setCloudState] = useState({
+    configured: isSupabaseConfigured,
+    status: isSupabaseConfigured ? 'checking' : 'setup_required',
+    session: null,
+    user: null,
+    lastSyncedAt: '',
+    error: '',
+    isSendingLink: false,
+    isSyncing: false,
+    isRestoring: false,
+  });
+  const [analysisState, setAnalysisState] = useState({
+    status: 'idle',
+    error: '',
+    result: null,
+  });
 
   const weekDays = useMemo(() => getRecentDays(RHYTHM_DAYS), []);
   const todayKey = weekDays[weekDays.length - 1]?.key || formatDateKey(new Date());
@@ -545,6 +583,60 @@ export default function App() {
     recognitionRef.current?.stop?.();
   }, []);
 
+  useEffect(() => {
+    let isCancelled = false;
+
+    async function hydrateCloud() {
+      if (!isSupabaseConfigured) {
+        setCloudState((previous) => ({ ...previous, status: 'setup_required' }));
+        return;
+      }
+
+      try {
+        const { session, user } = await getCloudSession();
+        if (isCancelled) return;
+
+        setCloudState((previous) => ({
+          ...previous,
+          session,
+          user,
+          status: user ? 'authenticated' : 'ready',
+          error: '',
+        }));
+
+        if (user?.email) setCloudEmail(user.email);
+      } catch (error) {
+        if (isCancelled) return;
+
+        setCloudState((previous) => ({
+          ...previous,
+          status: 'error',
+          error: error instanceof Error ? error.message : 'Cloud session could not be restored.',
+        }));
+      }
+    }
+
+    hydrateCloud();
+    const unsubscribe = onCloudAuthChange(({ session, user }) => {
+      if (isCancelled) return;
+
+      setCloudState((previous) => ({
+        ...previous,
+        session,
+        user,
+        status: user ? 'authenticated' : 'ready',
+        error: '',
+      }));
+
+      if (user?.email) setCloudEmail(user.email);
+    });
+
+    return () => {
+      isCancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
   const selectedHabitCount = countHabitsForDay(state.habits, selectedDateKey);
   const todayHabitCount = countHabitsForDay(state.habits, todayKey);
   const totalHabits = state.habits.length;
@@ -578,6 +670,48 @@ export default function App() {
     unavailable: 'Native mic later',
     error: 'Mic blocked',
   }[captureState.voiceStatus];
+  const cloudUserEmail = cloudState.user?.email || cloudEmail;
+  const cloudStatusLabel = cloudState.user
+    ? 'Cloud live'
+    : cloudState.configured
+      ? 'Ready to connect'
+      : 'Setup needed';
+  const cloudStatusText = cloudState.lastSyncedAt
+    ? `Last sync ${formatShortDate(new Date(cloudState.lastSyncedAt), {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })}`
+    : cloudState.user
+      ? 'Cloud backup is available for this account.'
+      : 'Connect email magic link to unlock cross-device backup.';
+
+  useEffect(() => {
+    if (!cloudState.user || !hasHydratedDb) return undefined;
+
+    if (autoSyncTimerRef.current) window.clearTimeout(autoSyncTimerRef.current);
+
+    autoSyncTimerRef.current = window.setTimeout(async () => {
+      try {
+        const synced = await pushCloudSnapshot(cloudState.user.id, state);
+        setCloudState((previous) => ({
+          ...previous,
+          lastSyncedAt: synced?.updated_at || new Date().toISOString(),
+          error: '',
+        }));
+      } catch (error) {
+        setCloudState((previous) => ({
+          ...previous,
+          error: error instanceof Error ? error.message : 'Cloud sync failed.',
+        }));
+      }
+    }, 1400);
+
+    return () => {
+      if (autoSyncTimerRef.current) window.clearTimeout(autoSyncTimerRef.current);
+    };
+  }, [cloudState.user, hasHydratedDb, state]);
 
   function launchBurst(element, color) {
     const rect = element.getBoundingClientRect();
@@ -735,16 +869,28 @@ export default function App() {
     photoInputRef.current?.click();
   }
 
-  function handlePhotoSelected(event) {
+  async function handlePhotoSelected(event) {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    setCaptureState((previous) => ({
-      ...previous,
-      photoName: file.name,
-      lastSource: 'photo',
-      providerHint: 'Photo captured. Next step: detect foods, estimate servings, then let the user confirm calories.',
-    }));
+    try {
+      const photoDataUrl = await readFileAsDataUrl(file);
+
+      setCaptureState((previous) => ({
+        ...previous,
+        photoName: file.name,
+        photoDataUrl: typeof photoDataUrl === 'string' ? photoDataUrl : '',
+        lastSource: 'photo',
+        providerHint: 'Photo captured. Next step: detect foods, estimate servings, then let the user confirm calories.',
+      }));
+      setAnalysisState({ status: 'idle', error: '', result: null });
+    } catch (error) {
+      setAnalysisState({
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Photo could not be read on this device.',
+        result: null,
+      });
+    }
 
     event.target.value = '';
   }
@@ -784,6 +930,7 @@ export default function App() {
         lastSource: 'voice',
         providerHint: 'Listening for meal name and quantity. Example: chicken rice bowl, about 450 grams.',
       }));
+      setAnalysisState({ status: 'idle', error: '', result: null });
     };
 
     recognition.onresult = (event) => {
@@ -820,6 +967,168 @@ export default function App() {
     };
 
     recognition.start();
+  }
+
+  async function requestMagicLink() {
+    const email = cloudEmail.trim();
+    if (!email) {
+      setCloudState((previous) => ({ ...previous, error: 'Enter your email first so I know where to send the magic link.' }));
+      return;
+    }
+
+    setCloudState((previous) => ({ ...previous, isSendingLink: true, error: '' }));
+
+    try {
+      await sendMagicLink(email);
+      setCloudState((previous) => ({
+        ...previous,
+        isSendingLink: false,
+        status: 'magic_link_sent',
+        error: '',
+      }));
+    } catch (error) {
+      setCloudState((previous) => ({
+        ...previous,
+        isSendingLink: false,
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Magic link could not be sent.',
+      }));
+    }
+  }
+
+  async function syncSnapshotToCloud({ silent = false } = {}) {
+    if (!cloudState.user) {
+      if (!silent) {
+        setCloudState((previous) => ({ ...previous, error: 'Connect your email first, then cloud backup will unlock.' }));
+      }
+      return;
+    }
+
+    setCloudState((previous) => ({ ...previous, isSyncing: true, error: '' }));
+
+    try {
+      const synced = await pushCloudSnapshot(cloudState.user.id, state);
+      setCloudState((previous) => ({
+        ...previous,
+        isSyncing: false,
+        lastSyncedAt: synced?.updated_at || new Date().toISOString(),
+        error: '',
+      }));
+    } catch (error) {
+      setCloudState((previous) => ({
+        ...previous,
+        isSyncing: false,
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Cloud sync failed.',
+      }));
+    }
+  }
+
+  async function restoreSnapshotFromCloud() {
+    if (!cloudState.user) {
+      setCloudState((previous) => ({ ...previous, error: 'Sign in first so I can restore your backup.' }));
+      return;
+    }
+
+    setCloudState((previous) => ({ ...previous, isRestoring: true, error: '' }));
+
+    try {
+      const snapshot = await pullCloudSnapshot(cloudState.user.id);
+
+      if (!snapshot?.payload) {
+        setCloudState((previous) => ({
+          ...previous,
+          isRestoring: false,
+          error: 'No backup exists in Supabase yet.',
+        }));
+        return;
+      }
+
+      const normalized = normalizeState(snapshot.payload);
+      setState(normalized);
+      setShowOnboarding(!normalized.profile.onboardingComplete);
+      const entry = normalized.journal.find((item) => item.dateKey === selectedDateKey);
+      setJournalDraft(entry?.text || '');
+
+      setCloudState((previous) => ({
+        ...previous,
+        isRestoring: false,
+        lastSyncedAt: snapshot.updated_at || previous.lastSyncedAt,
+        error: '',
+      }));
+    } catch (error) {
+      setCloudState((previous) => ({
+        ...previous,
+        isRestoring: false,
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Cloud restore failed.',
+      }));
+    }
+  }
+
+  async function disconnectCloud() {
+    try {
+      await signOutFromCloud();
+      setCloudState((previous) => ({
+        ...previous,
+        session: null,
+        user: null,
+        status: 'ready',
+        error: '',
+      }));
+    } catch (error) {
+      setCloudState((previous) => ({
+        ...previous,
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Cloud sign out failed.',
+      }));
+    }
+  }
+
+  async function runMealAnalysis() {
+    if (!captureState.photoDataUrl && !captureState.voiceTranscript.trim()) {
+      setAnalysisState({
+        status: 'error',
+        error: 'Capture a meal photo or dictate a meal first.',
+        result: null,
+      });
+      return;
+    }
+
+    setAnalysisState({ status: 'loading', error: '', result: null });
+
+    try {
+      const result = await analyzeMealCapture({
+        source: captureState.lastSource || (captureState.photoDataUrl ? 'photo' : 'voice'),
+        transcript: captureState.voiceTranscript.trim(),
+        imageDataUrl: captureState.photoDataUrl || undefined,
+        imageName: captureState.photoName || undefined,
+        locale: typeof navigator !== 'undefined' ? navigator.language : 'en-US',
+        dateKey: selectedDateKey,
+      });
+
+      if (result.status !== 'ok') {
+        setAnalysisState({
+          status: result.status || 'error',
+          error: result.message || 'Meal analysis is not configured yet.',
+          result: null,
+        });
+        return;
+      }
+
+      setAnalysisState({ status: 'complete', error: '', result });
+    } catch (error) {
+      setAnalysisState({
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Meal analysis failed.',
+        result: null,
+      });
+    }
+  }
+
+  function applyAnalyzedCalories() {
+    if (!analysisState.result?.totalCalories) return;
+    updateCalories(String(analysisState.result.totalCalories));
   }
 
   function saveJournalEntry() {
@@ -1166,6 +1475,63 @@ export default function App() {
                 <p className="capture-note">{captureState.providerHint}</p>
               </div>
 
+              <div className="provider-grid">
+                <span className="provider-pill">OpenAI vision / parsing</span>
+                <span className="provider-pill">Supabase edge function</span>
+                <span className="provider-pill">Nutrition API layer</span>
+              </div>
+
+              <div className="sync-actions">
+                <button type="button" className="primary-button" onClick={runMealAnalysis}>
+                  {analysisState.status === 'loading' ? 'Analyzing meal...' : 'Analyze meal'}
+                </button>
+                <button
+                  type="button"
+                  className="ghost-button"
+                  onClick={applyAnalyzedCalories}
+                  disabled={!analysisState.result?.totalCalories}
+                >
+                  Use estimate
+                </button>
+              </div>
+
+              {analysisState.status !== 'idle' ? (
+                <div className="analysis-card">
+                  <div className="analysis-head">
+                    <div>
+                      <span className="eyebrow">AI OUTPUT</span>
+                      <h3>{analysisState.result?.summary || 'Meal analysis'}</h3>
+                    </div>
+                    <span className="metric-pill">
+                      {analysisState.result?.provider || (analysisState.status === 'loading' ? 'Working' : 'Pending')}
+                    </span>
+                  </div>
+
+                  {analysisState.error ? (
+                    <p className="analysis-error">{analysisState.error}</p>
+                  ) : null}
+
+                  {analysisState.result ? (
+                    <>
+                      <div className="analysis-total">
+                        <strong>{analysisState.result.totalCalories ?? '—'}</strong>
+                        <span>estimated kcal</span>
+                      </div>
+
+                      <div className="analysis-food-list">
+                        {analysisState.result.foods?.map((food, index) => (
+                          <article key={`${food.name}-${index}`} className="analysis-food">
+                            <strong>{food.name}</strong>
+                            <span>{food.quantityText || 'Serving pending'}</span>
+                            <small>{Number.isFinite(food.calories) ? `${food.calories} kcal` : 'Needs nutrition provider'}</small>
+                          </article>
+                        ))}
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+
               <div className="capture-flow">
                 <div className="capture-flow-step">
                   <span>1</span>
@@ -1270,6 +1636,80 @@ export default function App() {
                 <strong>{topHabit ? topHabit.icon : '—'}</strong>
                 <p>{topHabit ? topHabit.name : 'No leader yet'}</p>
               </article>
+            </section>
+
+            <section className="section-card">
+              <div className="section-head">
+                <div>
+                  <span className="eyebrow">CLOUD SYNC</span>
+                  <h2>Supabase backup lane</h2>
+                </div>
+                <span className="status-badge">{cloudStatusLabel}</span>
+              </div>
+
+              <div className="sync-shell">
+                <label className="field">
+                  <span>Email magic link</span>
+                  <input
+                    type="email"
+                    value={cloudEmail}
+                    onChange={(event) => setCloudEmail(event.target.value)}
+                    placeholder="you@example.com"
+                    disabled={!cloudState.configured || Boolean(cloudState.user)}
+                  />
+                </label>
+
+                <p className="sync-copy">
+                  {cloudUserEmail ? `Connected as ${cloudUserEmail}. ${cloudStatusText}` : cloudStatusText}
+                </p>
+
+                <div className="sync-actions">
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={requestMagicLink}
+                    disabled={!cloudState.configured || cloudState.isSendingLink || Boolean(cloudState.user)}
+                  >
+                    {cloudState.isSendingLink ? 'Sending link...' : cloudState.user ? 'Cloud connected' : 'Send magic link'}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={() => syncSnapshotToCloud()}
+                    disabled={!cloudState.user || cloudState.isSyncing}
+                  >
+                    {cloudState.isSyncing ? 'Syncing...' : 'Sync now'}
+                  </button>
+                </div>
+
+                <div className="sync-actions">
+                  <button
+                    type="button"
+                    className="ghost-button"
+                    onClick={restoreSnapshotFromCloud}
+                    disabled={!cloudState.user || cloudState.isRestoring}
+                  >
+                    {cloudState.isRestoring ? 'Restoring...' : 'Restore backup'}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="ghost-danger"
+                    onClick={disconnectCloud}
+                    disabled={!cloudState.user}
+                  >
+                    Sign out
+                  </button>
+                </div>
+
+                <div className="sync-note-card">
+                  <strong>What syncs to cloud</strong>
+                  <p>Habits, day history, calories, sleep, journal, and future AI meal captures. Images themselves are prepared for a private storage bucket.</p>
+                </div>
+
+                {cloudState.error ? <p className="analysis-error">{cloudState.error}</p> : null}
+              </div>
             </section>
 
             <section className="section-card">
