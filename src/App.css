@@ -763,7 +763,9 @@
 
 .provider-pill,
 .sync-note-card,
-.analysis-food {
+.analysis-food,
+.account-helper-card,
+.account-stat-card {
   padding: 14px;
   border-radius: 20px;
   border: 1px solid rgba(124, 106, 91, 0.08);
@@ -782,6 +784,16 @@
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.account-stat-grid,
+.password-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.account-stat-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .auth-mode-row {
@@ -812,7 +824,10 @@
 
 .sync-copy,
 .sync-note-card p,
-.analysis-error {
+.analysis-error,
+.notice-copy,
+.account-helper-card p,
+.account-stat-card span {
   margin: 0;
   color: var(--muted);
   line-height: 1.55;
@@ -874,6 +889,10 @@
   color: #be3d17;
 }
 
+.notice-copy {
+  color: #157154;
+}
+
 .account-summary-card,
 .meal-card {
   display: flex;
@@ -899,6 +918,16 @@
 .account-summary-card p {
   margin: 0;
   color: var(--muted);
+}
+
+.account-helper-card strong,
+.account-stat-card strong {
+  display: block;
+}
+
+.account-stat-card strong {
+  margin-top: 6px;
+  font-size: 1rem;
 }
 
 .meal-thumb {
@@ -1342,7 +1371,8 @@ button:disabled {
   .capture-grid,
   .capture-flow,
   .provider-grid,
-  .auth-mode-row {
+  .auth-mode-row,
+  .account-stat-grid {
     grid-template-columns: 1fr;
   }
 

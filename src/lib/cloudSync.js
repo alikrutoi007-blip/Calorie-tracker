@@ -82,6 +82,13 @@ export async function signOutFromCloud() {
   if (error) throw error;
 }
 
+export async function updateCloudPassword(password) {
+  const client = requireClient();
+  const { data, error } = await client.auth.updateUser({ password });
+  if (error) throw error;
+  return data;
+}
+
 export async function pushCloudSnapshot(userId, payload) {
   const client = requireClient();
   const { data, error } = await client

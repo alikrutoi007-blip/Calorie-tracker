@@ -11,6 +11,7 @@ import {
   signInWithPassword,
   signUpWithPassword,
   signOutFromCloud,
+  updateCloudPassword,
   updateCloudProfile,
   uploadMealPhoto,
 } from './lib/cloudSync';
@@ -87,6 +88,18 @@ function readFileAsDataUrl(file) {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+}
+
+function formatAuthMessage(message) {
+  if (!message) return 'Something went wrong with your account request.';
+
+  const lowered = message.toLowerCase();
+  if (lowered.includes('invalid login credentials')) return 'Email or password is incorrect.';
+  if (lowered.includes('email not confirmed')) return 'Confirm your email once in Supabase, then sign in.';
+  if (lowered.includes('user already registered')) return 'This email already has an account. Try Sign in.';
+  if (lowered.includes('password should be at least')) return 'Password is too short. Use at least 6 characters.';
+  if (lowered.includes('same password')) return 'Choose a new password, not the current one.';
+  return message;
 }
 
 function getRecentDays(count) {
@@ -533,6 +546,14 @@ export default function App() {
     displayName: '',
     intention: '',
   });
+  const [passwordDraft, setPasswordDraft] = useState({
+    nextPassword: '',
+    confirmPassword: '',
+  });
+  const [authUi, setAuthUi] = useState({
+    showAuthPassword: false,
+    showNewPassword: false,
+  });
   const [cloudState, setCloudState] = useState({
     configured: isSupabaseConfigured,
     status: isSupabaseConfigured ? 'checking' : 'setup_required',
@@ -541,8 +562,10 @@ export default function App() {
     profile: null,
     lastSyncedAt: '',
     error: '',
+    notice: '',
     isAuthenticating: false,
     isSavingProfile: false,
+    isUpdatingPassword: false,
     isSyncing: false,
     isRestoring: false,
   });
@@ -642,6 +665,7 @@ export default function App() {
         ...previous,
         profile,
         error: '',
+        notice: '',
       }));
 
       setAccountDraft({
@@ -665,6 +689,7 @@ export default function App() {
           ...previous,
           lastSyncedAt: snapshot.updated_at || previous.lastSyncedAt,
           error: '',
+          notice: '',
         }));
       } else {
         const synced = await pushCloudSnapshot(user.id, latestStateRef.current);
@@ -672,6 +697,7 @@ export default function App() {
           ...previous,
           lastSyncedAt: synced?.updated_at || new Date().toISOString(),
           error: '',
+          notice: 'Cloud backup created for this account.',
         }));
       }
 
@@ -680,7 +706,8 @@ export default function App() {
       setCloudState((previous) => ({
         ...previous,
         status: 'error',
-        error: error instanceof Error ? error.message : 'Cloud account could not be prepared.',
+        error: formatAuthMessage(error instanceof Error ? error.message : 'Cloud account could not be prepared.'),
+        notice: '',
       }));
     } finally {
       setIsCloudBootstrapping(false);
@@ -692,7 +719,7 @@ export default function App() {
 
     async function hydrateCloud() {
       if (!isSupabaseConfigured) {
-        setCloudState((previous) => ({ ...previous, status: 'setup_required' }));
+        setCloudState((previous) => ({ ...previous, status: 'setup_required', notice: '' }));
         return;
       }
 
@@ -707,6 +734,7 @@ export default function App() {
           status: user ? 'authenticated' : 'ready',
           profile: previous.profile,
           error: '',
+          notice: '',
         }));
 
         if (user?.email) {
@@ -720,7 +748,8 @@ export default function App() {
         setCloudState((previous) => ({
           ...previous,
           status: 'error',
-          error: error instanceof Error ? error.message : 'Cloud session could not be restored.',
+          error: formatAuthMessage(error instanceof Error ? error.message : 'Cloud session could not be restored.'),
+          notice: '',
         }));
       }
     }
@@ -736,6 +765,7 @@ export default function App() {
         status: user ? 'authenticated' : 'ready',
         profile: user ? previous.profile : null,
         error: '',
+        notice: '',
       }));
 
       if (user?.email) {
@@ -821,6 +851,11 @@ export default function App() {
       : 'Sign in with email and password to unlock cross-device backup.';
   const mealsForSelectedDay = mealHistory.filter((meal) => meal.date_key === selectedDateKey);
   const visibleMeals = mealsForSelectedDay.length ? mealsForSelectedDay : mealHistory.slice(0, 6);
+  const accountStats = [
+    { label: 'Meals saved', value: cloudState.user ? String(mealHistory.length) : '0' },
+    { label: 'Email', value: cloudState.user?.email_confirmed_at ? 'Verified' : cloudState.user ? 'Check inbox' : 'Offline' },
+    { label: 'Backup', value: cloudState.lastSyncedAt ? 'Live' : cloudState.user ? 'Ready' : 'Locked' },
+  ];
 
   useEffect(() => {
     if (!cloudState.user || !hasHydratedDb || isCloudBootstrapping) return undefined;
@@ -1113,21 +1148,29 @@ export default function App() {
     setAccountDraft((previous) => ({ ...previous, [field]: value }));
   }
 
+  function updatePasswordDraft(field, value) {
+    setPasswordDraft((previous) => ({ ...previous, [field]: value }));
+  }
+
+  function updateAuthUi(field, value) {
+    setAuthUi((previous) => ({ ...previous, [field]: value }));
+  }
+
   async function handlePasswordAuth(mode) {
     const email = authDraft.email.trim();
     const password = authDraft.password;
 
     if (!email || !password) {
-      setCloudState((previous) => ({ ...previous, error: 'Enter both email and password first.' }));
+      setCloudState((previous) => ({ ...previous, error: 'Enter both email and password first.', notice: '' }));
       return;
     }
 
     if (mode === 'signup' && !authDraft.displayName.trim()) {
-      setCloudState((previous) => ({ ...previous, error: 'Add your name so the profile feels personal from day one.' }));
+      setCloudState((previous) => ({ ...previous, error: 'Add your name so the profile feels personal from day one.', notice: '' }));
       return;
     }
 
-    setCloudState((previous) => ({ ...previous, isAuthenticating: true, error: '' }));
+    setCloudState((previous) => ({ ...previous, isAuthenticating: true, error: '', notice: '' }));
 
     try {
       if (mode === 'signup') {
@@ -1142,7 +1185,8 @@ export default function App() {
             ...previous,
             isAuthenticating: false,
             status: 'ready',
-            error: 'Account created. If Supabase asks for email confirmation, confirm once and then sign in.',
+            error: '',
+            notice: 'Account created. If Supabase asks for email confirmation, confirm once and then sign in.',
           }));
           return;
         }
@@ -1155,13 +1199,15 @@ export default function App() {
         isAuthenticating: false,
         status: 'authenticated',
         error: '',
+        notice: mode === 'signup' ? 'Account created and signed in.' : 'Signed in successfully.',
       }));
     } catch (error) {
       setCloudState((previous) => ({
         ...previous,
         isAuthenticating: false,
         status: 'error',
-        error: error instanceof Error ? error.message : 'Account auth failed.',
+        error: formatAuthMessage(error instanceof Error ? error.message : 'Account auth failed.'),
+        notice: '',
       }));
     }
   }
@@ -1169,12 +1215,12 @@ export default function App() {
   async function syncSnapshotToCloud({ silent = false } = {}) {
     if (!cloudState.user) {
       if (!silent) {
-        setCloudState((previous) => ({ ...previous, error: 'Connect your email first, then cloud backup will unlock.' }));
+        setCloudState((previous) => ({ ...previous, error: 'Connect your email first, then cloud backup will unlock.', notice: '' }));
       }
       return;
     }
 
-    setCloudState((previous) => ({ ...previous, isSyncing: true, error: '' }));
+    setCloudState((previous) => ({ ...previous, isSyncing: true, error: '', notice: '' }));
 
     try {
       const synced = await pushCloudSnapshot(cloudState.user.id, state);
@@ -1183,24 +1229,26 @@ export default function App() {
         isSyncing: false,
         lastSyncedAt: synced?.updated_at || new Date().toISOString(),
         error: '',
+        notice: 'Cloud backup updated.',
       }));
     } catch (error) {
       setCloudState((previous) => ({
         ...previous,
         isSyncing: false,
         status: 'error',
-        error: error instanceof Error ? error.message : 'Cloud sync failed.',
+        error: formatAuthMessage(error instanceof Error ? error.message : 'Cloud sync failed.'),
+        notice: '',
       }));
     }
   }
 
   async function restoreSnapshotFromCloud() {
     if (!cloudState.user) {
-      setCloudState((previous) => ({ ...previous, error: 'Sign in first so I can restore your backup.' }));
+      setCloudState((previous) => ({ ...previous, error: 'Sign in first so I can restore your backup.', notice: '' }));
       return;
     }
 
-    setCloudState((previous) => ({ ...previous, isRestoring: true, error: '' }));
+    setCloudState((previous) => ({ ...previous, isRestoring: true, error: '', notice: '' }));
 
     try {
       const snapshot = await pullCloudSnapshot(cloudState.user.id);
@@ -1210,6 +1258,7 @@ export default function App() {
           ...previous,
           isRestoring: false,
           error: 'No backup exists in Supabase yet.',
+          notice: '',
         }));
         return;
       }
@@ -1229,13 +1278,15 @@ export default function App() {
         isRestoring: false,
         lastSyncedAt: snapshot.updated_at || previous.lastSyncedAt,
         error: '',
+        notice: 'Cloud backup restored onto this device.',
       }));
     } catch (error) {
       setCloudState((previous) => ({
         ...previous,
         isRestoring: false,
         status: 'error',
-        error: error instanceof Error ? error.message : 'Cloud restore failed.',
+        error: formatAuthMessage(error instanceof Error ? error.message : 'Cloud restore failed.'),
+        notice: '',
       }));
     }
   }
@@ -1253,12 +1304,14 @@ export default function App() {
         profile: null,
         status: 'ready',
         error: '',
+        notice: 'Signed out on this device.',
       }));
     } catch (error) {
       setCloudState((previous) => ({
         ...previous,
         status: 'error',
-        error: error instanceof Error ? error.message : 'Cloud sign out failed.',
+        error: formatAuthMessage(error instanceof Error ? error.message : 'Cloud sign out failed.'),
+        notice: '',
       }));
     }
   }
@@ -1278,7 +1331,7 @@ export default function App() {
 
     if (!cloudState.user) return;
 
-    setCloudState((previous) => ({ ...previous, isSavingProfile: true, error: '' }));
+    setCloudState((previous) => ({ ...previous, isSavingProfile: true, error: '', notice: '' }));
 
     try {
       const profile = await updateCloudProfile(cloudState.user.id, {
@@ -1291,13 +1344,61 @@ export default function App() {
         profile,
         isSavingProfile: false,
         error: '',
+        notice: 'Profile saved.',
       }));
     } catch (error) {
       setCloudState((previous) => ({
         ...previous,
         isSavingProfile: false,
         status: 'error',
-        error: error instanceof Error ? error.message : 'Profile could not be saved.',
+        error: formatAuthMessage(error instanceof Error ? error.message : 'Profile could not be saved.'),
+        notice: '',
+      }));
+    }
+  }
+
+  async function changeAccountPassword() {
+    const nextPassword = passwordDraft.nextPassword;
+    const confirmPassword = passwordDraft.confirmPassword;
+
+    if (!cloudState.user) {
+      setCloudState((previous) => ({ ...previous, error: 'Sign in first so password settings are attached to your account.', notice: '' }));
+      return;
+    }
+
+    if (!nextPassword || !confirmPassword) {
+      setCloudState((previous) => ({ ...previous, error: 'Enter the new password twice.', notice: '' }));
+      return;
+    }
+
+    if (nextPassword.length < 6) {
+      setCloudState((previous) => ({ ...previous, error: 'Password is too short. Use at least 6 characters.', notice: '' }));
+      return;
+    }
+
+    if (nextPassword !== confirmPassword) {
+      setCloudState((previous) => ({ ...previous, error: 'Passwords do not match yet.', notice: '' }));
+      return;
+    }
+
+    setCloudState((previous) => ({ ...previous, isUpdatingPassword: true, error: '', notice: '' }));
+
+    try {
+      await updateCloudPassword(nextPassword);
+      setPasswordDraft({ nextPassword: '', confirmPassword: '' });
+      setCloudState((previous) => ({
+        ...previous,
+        isUpdatingPassword: false,
+        error: '',
+        notice: 'Password updated.',
+      }));
+    } catch (error) {
+      setCloudState((previous) => ({
+        ...previous,
+        isUpdatingPassword: false,
+        status: 'error',
+        error: formatAuthMessage(error instanceof Error ? error.message : 'Password could not be updated.'),
+        notice: '',
       }));
     }
   }
@@ -2002,7 +2103,7 @@ export default function App() {
                     <label className="field">
                       <span>Password</span>
                       <input
-                        type="password"
+                        type={authUi.showAuthPassword ? 'text' : 'password'}
                         value={authDraft.password}
                         onChange={(event) => updateAuthDraft('password', event.target.value)}
                         placeholder="At least 6 characters"
@@ -2015,6 +2116,15 @@ export default function App() {
                     <div className="sync-actions">
                       <button
                         type="button"
+                        className="ghost-button"
+                        onClick={() => updateAuthUi('showAuthPassword', !authUi.showAuthPassword)}
+                        disabled={!cloudState.configured}
+                      >
+                        {authUi.showAuthPassword ? 'Hide password' : 'Show password'}
+                      </button>
+
+                      <button
+                        type="button"
                         className="primary-button"
                         onClick={() => handlePasswordAuth(authDraft.mode)}
                         disabled={!cloudState.configured || cloudState.isAuthenticating}
@@ -2023,6 +2133,11 @@ export default function App() {
                           ? authDraft.mode === 'signup' ? 'Creating account...' : 'Signing in...'
                           : authDraft.mode === 'signup' ? 'Create account' : 'Sign in'}
                       </button>
+                    </div>
+
+                    <div className="account-helper-card">
+                      <strong>{authDraft.mode === 'signup' ? 'Why create an account' : 'Why sign in'}</strong>
+                      <p>Sync habits, calories, sleep, journal and meal history across devices. Your food photos stay in private Supabase storage.</p>
                     </div>
                   </>
                 ) : (
@@ -2034,6 +2149,15 @@ export default function App() {
                         <p>{cloudUserEmail}</p>
                       </div>
                       <span className="metric-pill">{cloudStatusText}</span>
+                    </div>
+
+                    <div className="account-stat-grid">
+                      {accountStats.map((item) => (
+                        <article key={item.label} className="account-stat-card">
+                          <span>{item.label}</span>
+                          <strong>{item.value}</strong>
+                        </article>
+                      ))}
                     </div>
 
                     <label className="field">
@@ -2076,6 +2200,47 @@ export default function App() {
                       </button>
                     </div>
 
+                    <div className="password-stack">
+                      <label className="field">
+                        <span>New password</span>
+                        <input
+                          type={authUi.showNewPassword ? 'text' : 'password'}
+                          value={passwordDraft.nextPassword}
+                          onChange={(event) => updatePasswordDraft('nextPassword', event.target.value)}
+                          placeholder="At least 6 characters"
+                        />
+                      </label>
+
+                      <label className="field">
+                        <span>Confirm new password</span>
+                        <input
+                          type={authUi.showNewPassword ? 'text' : 'password'}
+                          value={passwordDraft.confirmPassword}
+                          onChange={(event) => updatePasswordDraft('confirmPassword', event.target.value)}
+                          placeholder="Repeat new password"
+                        />
+                      </label>
+
+                      <div className="sync-actions">
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={() => updateAuthUi('showNewPassword', !authUi.showNewPassword)}
+                        >
+                          {authUi.showNewPassword ? 'Hide password' : 'Show password'}
+                        </button>
+
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={changeAccountPassword}
+                          disabled={cloudState.isUpdatingPassword}
+                        >
+                          {cloudState.isUpdatingPassword ? 'Updating password...' : 'Update password'}
+                        </button>
+                      </div>
+                    </div>
+
                     <div className="sync-actions">
                       <button
                         type="button"
@@ -2103,6 +2268,7 @@ export default function App() {
                   <p>Habits, day history, calories, sleep, journal, profile preferences, and meal captures with private photo storage.</p>
                 </div>
 
+                {cloudState.notice ? <p className="notice-copy">{cloudState.notice}</p> : null}
                 {cloudState.error ? <p className="analysis-error">{cloudState.error}</p> : null}
               </div>
             </section>
