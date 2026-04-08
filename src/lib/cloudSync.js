@@ -226,7 +226,7 @@ export async function fetchMealCaptures(userId, options = {}) {
 
   const { data, error } = await client
     .from(MEAL_CAPTURE_TABLE)
-    .select('id, source, summary, transcript, image_name, storage_path, provider, total_calories, foods, date_key, created_at')
+    .select('id, source, summary, transcript, image_name, storage_path, provider, total_calories, foods, raw_payload, date_key, created_at')
     .eq('user_id', userId)
     .order('created_at', { ascending: false })
     .limit(limit);
@@ -235,13 +235,19 @@ export async function fetchMealCaptures(userId, options = {}) {
 
   return Promise.all(
     (data || []).map(async (meal) => {
-      if (!meal.storage_path) return { ...meal, imageUrl: '' };
+      const totalMacros = meal.raw_payload?.analysis?.totalMacros || {
+        protein: (meal.foods || []).reduce((total, food) => total + (Number(food?.protein) || 0), 0),
+        fat: (meal.foods || []).reduce((total, food) => total + (Number(food?.fat) || 0), 0),
+        carbs: (meal.foods || []).reduce((total, food) => total + (Number(food?.carbs) || 0), 0),
+      };
+
+      if (!meal.storage_path) return { ...meal, imageUrl: '', total_macros: totalMacros };
 
       try {
         const imageUrl = await createMealPhotoSignedUrl(meal.storage_path);
-        return { ...meal, imageUrl };
+        return { ...meal, imageUrl, total_macros: totalMacros };
       } catch {
-        return { ...meal, imageUrl: '' };
+        return { ...meal, imageUrl: '', total_macros: totalMacros };
       }
     }),
   );

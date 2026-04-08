@@ -21,7 +21,18 @@ export async function analyzeMealCapture(payload) {
   });
 
   if (error) {
-    throw new Error(error.message || 'Meal analysis request failed.');
+    let detailedMessage = '';
+
+    try {
+      if (typeof error.context?.json === 'function') {
+        const contextPayload = await error.context.json();
+        detailedMessage = contextPayload?.message || contextPayload?.error || '';
+      }
+    } catch {
+      detailedMessage = '';
+    }
+
+    throw new Error(detailedMessage || error.message || 'Meal analysis request failed.');
   }
 
   return data;

@@ -61,6 +61,12 @@ const CALORIE_CAPTURE_MODES = [
     body: 'Say the meal in one sentence so we can parse food + serving size.',
     icon: 'mic',
   },
+  {
+    id: 'manual',
+    title: 'Type meal',
+    body: 'Write the meal naturally if you cannot shoot or speak right now.',
+    icon: 'keyboard',
+  },
 ];
 
 const APP_SETTINGS = [
@@ -105,6 +111,45 @@ const EMAIL_SETTINGS = [
   },
 ];
 
+const ACHIEVEMENT_LIBRARY = [
+  {
+    id: 'first-scan',
+    icon: 'photo_camera',
+    title: 'First scan',
+    body: 'Logged a meal with camera or voice for the first time.',
+  },
+  {
+    id: 'protein-closer',
+    icon: 'fitness_center',
+    title: 'Protein closer',
+    body: 'Closed the day with a strong protein finish.',
+  },
+  {
+    id: 'sugar-smoother',
+    icon: 'water_drop',
+    title: 'Sugar smoother',
+    body: 'Balanced a high-glycemic meal with fiber or protein.',
+  },
+  {
+    id: 'macro-balance',
+    icon: 'donut_small',
+    title: 'Macro balance',
+    body: 'Kept calories and macros in a stable daily rhythm.',
+  },
+  {
+    id: 'smart-chef',
+    icon: 'skillet',
+    title: 'Smart chef',
+    body: 'Used a fridge-based suggestion instead of random snacking.',
+  },
+  {
+    id: 'streak-fuel',
+    icon: 'local_fire_department',
+    title: 'Streak fuel',
+    body: 'Fed the day without breaking the habit loop.',
+  },
+];
+
 const PARTICLES = Array.from({ length: 10 }, (_, index) => index);
 
 function uid() {
@@ -145,6 +190,19 @@ function formatAuthMessage(message) {
   if (lowered.includes('user already registered')) return 'This email already has an account. Try Sign in.';
   if (lowered.includes('password should be at least')) return 'Password is too short. Use at least 6 characters.';
   if (lowered.includes('same password')) return 'Choose a new password, not the current one.';
+  return message;
+}
+
+function formatMealAnalysisMessage(message) {
+  if (!message) return 'Meal analysis could not finish on this device yet.';
+
+  const lowered = message.toLowerCase();
+  if (lowered.includes('openai_api_key')) return 'AI meal analysis is not configured yet. Add the OpenAI key to Supabase secrets.';
+  if (lowered.includes('supabase environment variables')) return 'Supabase edge function setup is incomplete right now.';
+  if (lowered.includes('openai meal parse failed')) return 'AI could not confidently parse this meal. Try a clearer photo or a shorter description.';
+  if (lowered.includes('failed to fetch') || lowered.includes('network')) return 'The network interrupted the meal analysis request. Try again in a moment.';
+  if (lowered.includes('storage') || lowered.includes('bucket')) return 'The meal was analyzed, but photo storage is not ready yet.';
+  if (lowered.includes('row-level security') || lowered.includes('policy')) return 'Your account is signed in, but the backend blocked saving this meal. Supabase policies need a quick check.';
   return message;
 }
 
@@ -247,10 +305,19 @@ function createDefaultState() {
   return {
     profile: { name: '', intention: '', onboardingComplete: false },
     preferences: createDefaultPreferences(),
+    achievements: {},
     habits: [],
-    calories: { target: DEFAULT_CALORIE_TARGET, entries: {} },
+    calories: { target: DEFAULT_CALORIE_TARGET, proteinTarget: 140, entries: {}, macros: {} },
     sleep: { target: DEFAULT_SLEEP_TARGET, entries: {} },
     journal: [],
+  };
+}
+
+function normalizeMacroEntry(entry) {
+  return {
+    protein: clamp(Number(entry?.protein) || 0, 0, 1000),
+    fat: clamp(Number(entry?.fat) || 0, 0, 1000),
+    carbs: clamp(Number(entry?.carbs) || 0, 0, 1000),
   };
 }
 
@@ -323,6 +390,11 @@ function normalizeState(parsed) {
   const calorieEntries = parsed?.calories?.entries && typeof parsed.calories.entries === 'object'
     ? parsed.calories.entries
     : {};
+  const macroEntries = parsed?.calories?.macros && typeof parsed.calories.macros === 'object'
+    ? Object.fromEntries(
+        Object.entries(parsed.calories.macros).map(([key, value]) => [key, normalizeMacroEntry(value)]),
+      )
+    : {};
 
   if (!Object.keys(calorieEntries).length && Number.isFinite(Number(parsed?.calories?.consumed))) {
     calorieEntries[todayKey] = Number(parsed.calories.consumed);
@@ -341,8 +413,14 @@ function normalizeState(parsed) {
         : Boolean(hasData),
     },
     preferences: normalizePreferences(parsed?.preferences),
+    achievements: parsed?.achievements && typeof parsed.achievements === 'object' ? parsed.achievements : {},
     habits,
-    calories: { target: Number(parsed?.calories?.target) || DEFAULT_CALORIE_TARGET, entries: calorieEntries },
+    calories: {
+      target: Number(parsed?.calories?.target) || DEFAULT_CALORIE_TARGET,
+      proteinTarget: Number(parsed?.calories?.proteinTarget) || 140,
+      entries: calorieEntries,
+      macros: macroEntries,
+    },
     sleep: {
       target: Number(parsed?.sleep?.target) || DEFAULT_SLEEP_TARGET,
       entries: parsed?.sleep?.entries && typeof parsed.sleep.entries === 'object' ? parsed.sleep.entries : {},
@@ -408,6 +486,78 @@ function getSuggestedNudge(totalHabits, completedToday) {
   if (completedToday === totalHabits) return 'Day closed. Save the feeling and come back tomorrow.';
   if (completedToday === 0) return 'One tap is enough to restart momentum today.';
   return 'Keep the loop tiny: one more action and stop.';
+}
+
+function formatMacros(entry) {
+  const normalized = normalizeMacroEntry(entry);
+  return [
+    { key: 'protein', label: 'Protein', value: normalized.protein, unit: 'g' },
+    { key: 'fat', label: 'Fat', value: normalized.fat, unit: 'g' },
+    { key: 'carbs', label: 'Carbs', value: normalized.carbs, unit: 'g' },
+  ];
+}
+
+function totalMacroGrams(entry) {
+  const normalized = normalizeMacroEntry(entry);
+  return normalized.protein + normalized.fat + normalized.carbs;
+}
+
+function buildSmartChefSuggestions({ remainingCalories, proteinGap, carbsGap, fatGap, fridgeText }) {
+  const ingredients = fridgeText
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const fridgeLine = ingredients.length ? `Use what you already have: ${ingredients.slice(0, 5).join(', ')}.` : 'Works even if the fridge list is still empty.';
+
+  const ideas = [];
+
+  if (proteinGap > 30) {
+    ideas.push({
+      title: 'Protein rescue bowl',
+      body: `${fridgeLine} Aim for a lean protein anchor and keep it under roughly ${Math.max(220, Math.min(remainingCalories, 520))} kcal.`,
+    });
+  }
+
+  if (remainingCalories > 350 && carbsGap > 20) {
+    ideas.push({
+      title: 'Balanced carb close',
+      body: 'Add one calm carb source plus protein, so the day closes without a late-night sugar spike.',
+    });
+  }
+
+  if (fatGap > 18) {
+    ideas.push({
+      title: 'Satiety plate',
+      body: 'A small fat source with protein can make the finish feel satisfying instead of snacky.',
+    });
+  }
+
+  if (remainingCalories < 220) {
+    ideas.push({
+      title: 'Minimal finish',
+      body: 'Keep the ending tiny: yogurt, eggs, cottage cheese, tuna or another simple protein-first option.',
+    });
+  }
+
+  if (!ideas.length) {
+    ideas.push({
+      title: 'Maintenance close',
+      body: 'You are near target already. Choose a light protein or stop here and protect the rhythm.',
+    });
+  }
+
+  return ideas.slice(0, 3);
+}
+
+function addMacroEntries(left, right) {
+  const leftNormalized = normalizeMacroEntry(left);
+  const rightNormalized = normalizeMacroEntry(right);
+
+  return {
+    protein: clamp(leftNormalized.protein + rightNormalized.protein, 0, 1000),
+    fat: clamp(leftNormalized.fat + rightNormalized.fat, 0, 1000),
+    carbs: clamp(leftNormalized.carbs + rightNormalized.carbs, 0, 1000),
+  };
 }
 
 function SparkLayer({ bursts }) {
@@ -755,6 +905,64 @@ function ProfileSheet({
         <section className="profile-sheet-section">
           <div className="section-head profile-sheet-headline">
             <div>
+              <span className="eyebrow">NOTIFICATIONS</span>
+              <h2>Push, mail, nudges</h2>
+            </div>
+            <span className="metric-pill">{cloudState.user ? 'Cloud aware' : 'Local first'}</span>
+          </div>
+
+          <div className="settings-stack">
+            <SettingToggle
+              label="Daily nudges"
+              description="Keep tiny return-friendly reminders visible inside the app."
+              checked={preferences.app.dailyNudges}
+              onToggle={() => onTogglePreference('app', 'dailyNudges')}
+            />
+
+            {EMAIL_SETTINGS.map((setting) => (
+              <SettingToggle
+                key={setting.key}
+                label={setting.label}
+                description={setting.description}
+                checked={preferences.email[setting.key]}
+                disabled={!cloudState.user}
+                onToggle={() => onTogglePreference(setting.section, setting.key)}
+              />
+            ))}
+          </div>
+        </section>
+
+        <section className="profile-sheet-section">
+          <div className="section-head profile-sheet-headline">
+            <div>
+              <span className="eyebrow">ACCOUNT SETTINGS</span>
+              <h2>Identity and backup</h2>
+            </div>
+            <span className="metric-pill">{cloudState.user ? 'Signed in' : 'Guest mode'}</span>
+          </div>
+
+          <div className="profile-sheet-actions">
+            <button type="button" className="ghost-button" onClick={onOpenAccount}>Email & password</button>
+            <button type="button" className="ghost-button" onClick={onRestore} disabled={!cloudState.user || cloudState.isRestoring}>
+              {cloudState.isRestoring ? 'Restoring...' : 'Restore backup'}
+            </button>
+          </div>
+
+          <StateCard
+            compact
+            tone={cloudState.user ? 'success' : 'neutral'}
+            icon={cloudState.user ? 'cloud_done' : 'person_off'}
+            eyebrow="ACCOUNT STATE"
+            title={cloudState.user ? 'Cloud account connected' : 'Still using local device mode'}
+            body={cloudState.user
+              ? 'Email, meals, sync and recovery are attached to your account.'
+              : 'Create an account when you want cloud sync, history across devices and private storage.'}
+          />
+        </section>
+
+        <section className="profile-sheet-section">
+          <div className="section-head profile-sheet-headline">
+            <div>
               <span className="eyebrow">APP SETTINGS</span>
               <h2>Interface feel</h2>
             </div>
@@ -777,42 +985,44 @@ function ProfileSheet({
         <section className="profile-sheet-section">
           <div className="section-head profile-sheet-headline">
             <div>
-              <span className="eyebrow">EMAIL SETTINGS</span>
-              <h2>Mail rhythm</h2>
+              <span className="eyebrow">ABOUT US</span>
+              <h2>Why Momentum exists</h2>
             </div>
-            <span className="metric-pill">{cloudState.user ? 'Ready for sync' : 'Account later'}</span>
+            <span className="metric-pill">Mission</span>
           </div>
 
-          {!cloudState.user ? (
-            <StateCard
-              compact
-              tone="warm"
-              icon="mail_lock"
-              eyebrow="EMAIL NEEDS ACCOUNT"
-              title="Connect email to use delivery preferences"
-              body="The toggles are ready, but account-based email settings only make sense once you sign in."
-            />
-          ) : null}
+          <StateCard
+            compact
+            tone="neutral"
+            icon="favorite"
+            eyebrow="MOMENTUM"
+            title="We want nutrition to feel light, not punishing"
+            body="The product direction is simple: lower friction, calmer design, smarter food guidance and better consistency on iPhone."
+          />
+        </section>
 
-          <div className="settings-stack">
-            {EMAIL_SETTINGS.map((setting) => (
-              <SettingToggle
-                key={setting.key}
-                label={setting.label}
-                description={setting.description}
-                checked={preferences.email[setting.key]}
-                disabled={!cloudState.user}
-                onToggle={() => onTogglePreference(setting.section, setting.key)}
-              />
-            ))}
+        <section className="profile-sheet-section">
+          <div className="section-head profile-sheet-headline">
+            <div>
+              <span className="eyebrow">SUBSCRIPTIONS</span>
+              <h2>Pro layer</h2>
+            </div>
+            <span className="metric-pill">Coming next</span>
           </div>
+
+          <StateCard
+            compact
+            tone="warm"
+            icon="workspace_premium"
+            eyebrow="FREE PLAN"
+            title="Core tracking is live"
+            body="Subscriptions will later unlock deeper AI nutrition, native Health sync, advanced insights and premium coaching loops."
+            actionLabel="Open account center"
+            onAction={onOpenAccount}
+          />
         </section>
 
         <div className="profile-sheet-actions is-secondary">
-          <button type="button" className="ghost-button" onClick={onRestore} disabled={!cloudState.user || cloudState.isRestoring}>
-            {cloudState.isRestoring ? 'Restoring...' : 'Restore backup'}
-          </button>
-
           <button type="button" className="ghost-danger" onClick={cloudState.user ? onSignOut : onResetApp}>
             {cloudState.user ? 'Sign out' : 'Reset app'}
           </button>
@@ -869,6 +1079,7 @@ export default function App() {
   const [isProfileSheetOpen, setProfileSheetOpen] = useState(false);
   const [habitDraft, setHabitDraft] = useState(createHabitDraft());
   const photoInputRef = useRef(null);
+  const manualNoteInputRef = useRef(null);
   const recognitionRef = useRef(null);
   const [captureState, setCaptureState] = useState({
     photoName: '',
@@ -876,6 +1087,7 @@ export default function App() {
     photoFile: null,
     voiceStatus: 'idle',
     voiceTranscript: '',
+    manualNote: '',
     providerHint: 'Ready for a real AI meal pipeline: capture, parse, confirm, save.',
     lastSource: '',
   });
@@ -920,6 +1132,7 @@ export default function App() {
     recoveryMode: false,
   });
   const [mealHistory, setMealHistory] = useState([]);
+  const [smartChefDraft, setSmartChefDraft] = useState('');
   const [mealHistoryState, setMealHistoryState] = useState({
     isLoading: false,
     error: '',
@@ -1198,6 +1411,17 @@ export default function App() {
     ? Math.round((weeklyProgress.reduce((total, day) => total + day.completed, 0) / (totalHabits * RHYTHM_DAYS)) * 100)
     : 0;
   const selectedCalories = Number(state.calories.entries?.[selectedDateKey]) || 0;
+  const selectedMacros = normalizeMacroEntry(state.calories.macros?.[selectedDateKey]);
+  const macroCards = formatMacros(selectedMacros);
+  const proteinTarget = Number(state.calories.proteinTarget) || 140;
+  const macroTargets = {
+    protein: proteinTarget,
+    fat: Math.round(((Number(state.calories.target) || DEFAULT_CALORIE_TARGET) * 0.3) / 9),
+    carbs: Math.round(((Number(state.calories.target) || DEFAULT_CALORIE_TARGET) * 0.4) / 4),
+  };
+  const proteinGap = Math.max(0, macroTargets.protein - selectedMacros.protein);
+  const carbsGap = Math.max(0, macroTargets.carbs - selectedMacros.carbs);
+  const fatGap = Math.max(0, macroTargets.fat - selectedMacros.fat);
   const calorieRemaining = (Number(state.calories.target) || DEFAULT_CALORIE_TARGET) - selectedCalories;
   const calorieProgress = Number(state.calories.target)
     ? clamp(Math.round((selectedCalories / state.calories.target) * 100), 0, 100)
@@ -1221,6 +1445,7 @@ export default function App() {
     unavailable: 'Native mic later',
     error: 'Mic blocked',
   }[captureState.voiceStatus];
+  const combinedCaptureNote = [captureState.voiceTranscript.trim(), captureState.manualNote.trim()].filter(Boolean).join('. ');
   const cloudUserEmail = cloudState.user?.email || authDraft.email;
   const cloudStatusLabel = cloudState.recoveryMode
     ? 'Reset password'
@@ -1260,6 +1485,14 @@ export default function App() {
       subtitle: state.profile.intention || 'Account, sync, recovery and weekly clarity.',
     },
   }[activeTab];
+  const smartChefIdeas = buildSmartChefSuggestions({
+    remainingCalories: Math.max(0, calorieRemaining),
+    proteinGap,
+    carbsGap,
+    fatGap,
+    fridgeText: smartChefDraft,
+  });
+  const unlockedAchievementCount = ACHIEVEMENT_LIBRARY.filter((achievement) => state.achievements?.[achievement.id]).length;
   const accountStats = [
     { label: 'Meals saved', value: cloudState.user ? String(mealHistory.length) : '0' },
     { label: 'Email', value: cloudState.recoveryMode ? 'Recovery' : cloudState.user?.email_confirmed_at ? 'Verified' : cloudState.user ? 'Check inbox' : 'Offline' },
@@ -1281,6 +1514,9 @@ export default function App() {
     && !shouldShowRecoveryBanner
     && !shouldShowSuccessBanner
     && !cloudState.recoveryMode;
+  const analyzedMacros = normalizeMacroEntry(analysisState.result?.totalMacros);
+  const metabolicNote = analysisState.result?.glycemicNote || analysisState.result?.coachNote || '';
+  const energyPrediction = analysisState.result?.energyForecast || '';
 
   useEffect(() => {
     if (!cloudState.user || !hasHydratedDb || isCloudBootstrapping) return undefined;
@@ -1456,12 +1692,33 @@ export default function App() {
     }));
   }
 
+  function updateProteinTarget(value) {
+    const parsedValue = Number(value);
+    setState((previous) => ({
+      ...previous,
+      calories: {
+        ...previous.calories,
+        proteinTarget: value === '' || !Number.isFinite(parsedValue) ? 140 : clamp(parsedValue, 40, 240),
+      },
+    }));
+  }
+
   function adjustCalories(delta) {
     updateCalories(String(Math.max(0, selectedCalories + delta)));
   }
 
   function openPhotoPicker() {
     photoInputRef.current?.click();
+  }
+
+  function focusManualCapture() {
+    setCaptureState((previous) => ({
+      ...previous,
+      lastSource: 'manual',
+      providerHint: 'Type the meal naturally, and AI will estimate calories, BJU and follow-up guidance.',
+    }));
+    setAnalysisState({ status: 'idle', error: '', result: null });
+    manualNoteInputRef.current?.focus();
   }
 
   async function handlePhotoSelected(event) {
@@ -1581,6 +1838,19 @@ export default function App() {
     setAuthUi((previous) => ({ ...previous, [field]: value }));
   }
 
+  function updateCaptureField(field, value) {
+    setCaptureState((previous) => ({
+      ...previous,
+      [field]: value,
+      ...(field === 'manualNote' && value.trim()
+        ? {
+            lastSource: previous.lastSource || 'manual',
+            providerHint: 'Typed meal note is ready. Add a photo or voice note too if you want tighter estimates.',
+          }
+        : {}),
+    }));
+  }
+
   function togglePreference(section, key) {
     setState((previous) => ({
       ...previous,
@@ -1597,6 +1867,16 @@ export default function App() {
   function openAccountCenter() {
     setActiveTab('insights');
     setProfileSheetOpen(false);
+  }
+
+  function toggleAchievement(achievementId) {
+    setState((previous) => ({
+      ...previous,
+      achievements: {
+        ...previous.achievements,
+        [achievementId]: !previous.achievements?.[achievementId],
+      },
+    }));
   }
 
   async function handlePasswordAuth(mode) {
@@ -1976,10 +2256,11 @@ export default function App() {
   }
 
   async function runMealAnalysis() {
-    if (!captureState.photoDataUrl && !captureState.voiceTranscript.trim()) {
+    const combinedTranscript = [captureState.voiceTranscript.trim(), captureState.manualNote.trim()].filter(Boolean).join('. ');
+    if (!captureState.photoDataUrl && !combinedTranscript) {
       setAnalysisState({
         status: 'error',
-        error: 'Capture a meal photo or dictate a meal first.',
+        error: 'Add a meal photo, say the meal out loud, or type the meal first.',
         result: null,
       });
       return;
@@ -1995,8 +2276,8 @@ export default function App() {
       }
 
       const result = await analyzeMealCapture({
-        source: captureState.lastSource || (captureState.photoDataUrl ? 'photo' : 'voice'),
-        transcript: captureState.voiceTranscript.trim(),
+        source: captureState.lastSource || (captureState.photoDataUrl ? 'photo' : combinedTranscript ? 'manual' : 'voice'),
+        transcript: combinedTranscript,
         imageDataUrl: captureState.photoDataUrl || undefined,
         imageName: captureState.photoName || undefined,
         storagePath,
@@ -2007,24 +2288,34 @@ export default function App() {
       if (result.status !== 'ok') {
         setAnalysisState({
           status: result.status || 'error',
-          error: result.message || 'Meal analysis is not configured yet.',
+          error: formatMealAnalysisMessage(result.message || 'Meal analysis is not configured yet.'),
           result: null,
         });
+        setCaptureState((previous) => ({
+          ...previous,
+          providerHint: formatMealAnalysisMessage(result.message || 'Meal analysis is not configured yet.'),
+        }));
         return;
       }
 
       setAnalysisState({ status: 'complete', error: '', result });
 
-      if (result.totalCalories) {
+      if (result.totalCalories || totalMacroGrams(result.totalMacros)) {
         setState((previous) => {
           const currentValue = Number(previous.calories.entries?.[selectedDateKey]) || 0;
+          const currentMacros = normalizeMacroEntry(previous.calories.macros?.[selectedDateKey]);
+          const nextMacros = addMacroEntries(currentMacros, result.totalMacros);
           return {
             ...previous,
             calories: {
               ...previous.calories,
               entries: {
                 ...previous.calories.entries,
-                [selectedDateKey]: clamp(currentValue + result.totalCalories, 0, 10000),
+                [selectedDateKey]: clamp(currentValue + (result.totalCalories || 0), 0, 10000),
+              },
+              macros: {
+                ...previous.calories.macros,
+                [selectedDateKey]: nextMacros,
               },
             },
           };
@@ -2034,9 +2325,19 @@ export default function App() {
       setCaptureState((previous) => ({
         ...previous,
         providerHint: result.totalCalories
-          ? `${result.totalCalories} kcal added to ${selectedDayLabel.toLowerCase()}.`
-          : 'Meal parsed. Add a nutrition provider for calorie estimates.',
+          ? `${result.totalCalories} kcal and BJU added to ${selectedDayLabel.toLowerCase()}.`
+          : 'Meal parsed. BJU are ready even if calories still need a nutrition provider.',
       }));
+
+      if (result.savedId && !state.achievements?.['first-scan']) {
+        setState((previous) => ({
+          ...previous,
+          achievements: {
+            ...previous.achievements,
+            'first-scan': true,
+          },
+        }));
+      }
 
       if (cloudState.user) {
         await refreshMealHistory(cloudState.user.id);
@@ -2044,9 +2345,13 @@ export default function App() {
     } catch (error) {
       setAnalysisState({
         status: 'error',
-        error: error instanceof Error ? error.message : 'Meal analysis failed.',
+        error: formatMealAnalysisMessage(error instanceof Error ? error.message : 'Meal analysis failed.'),
         result: null,
       });
+      setCaptureState((previous) => ({
+        ...previous,
+        providerHint: formatMealAnalysisMessage(error instanceof Error ? error.message : 'Meal analysis failed.'),
+      }));
     }
   }
 
@@ -2059,6 +2364,10 @@ export default function App() {
         entries: {
           ...previous.calories.entries,
           [selectedDateKey]: clamp(analysisState.result.totalCalories, 0, 10000),
+        },
+        macros: {
+          ...previous.calories.macros,
+          [selectedDateKey]: normalizeMacroEntry(analysisState.result.totalMacros),
         },
       },
     }));
@@ -2374,8 +2683,8 @@ export default function App() {
                 </div>
 
                 <div className="calorie-copy">
-                  <h3>Consistency beats precision</h3>
-                  <p>Log a rough number in under 10 seconds and keep moving.</p>
+                  <h3>We will make diet tracking feel easy</h3>
+                  <p>Calories, protein and meal quality should feel guided, not overwhelming.</p>
 
                   <label className="field">
                     <span>Calories for selected day</span>
@@ -2386,7 +2695,27 @@ export default function App() {
                     <span>Daily target</span>
                     <input type="number" min="1200" max="5000" step="10" value={state.calories.target} onChange={(event) => updateCalorieTarget(event.target.value)} />
                   </label>
+
+                  <label className="field">
+                    <span>Protein target</span>
+                    <input type="number" min="40" max="240" step="5" value={state.calories.proteinTarget} onChange={(event) => updateProteinTarget(event.target.value)} />
+                  </label>
                 </div>
+              </div>
+
+              <div className="macro-summary-grid">
+                {macroCards.map((macro) => {
+                  const targetValue = macroTargets[macro.key];
+                  const progress = clamp(Math.round((macro.value / Math.max(targetValue, 1)) * 100), 0, 100);
+
+                  return (
+                    <article key={macro.key} className="macro-summary-card">
+                      <span>{macro.label}</span>
+                      <strong>{macro.value}{macro.unit}</strong>
+                      <small>{progress}% of target</small>
+                    </article>
+                  );
+                })}
               </div>
 
               <div className="quick-add-row">
@@ -2400,15 +2729,25 @@ export default function App() {
             <section className="section-card">
               <div className="section-head">
                 <div>
-                  <span className="eyebrow">CAPTURE LANE</span>
-                  <h2>Photo or voice logging</h2>
+                  <span className="eyebrow">AI DIET ASSISTANT</span>
+                  <h2>Hybrid meal capture</h2>
                 </div>
-                <span className="metric-pill">iPhone-ready flow</span>
+                <span className="metric-pill">Photo + voice + BJU</span>
               </div>
+
+              <StateCard
+                compact
+                tone="warm"
+                icon="nutrition"
+                eyebrow="COACH MODE"
+                title="Tell us the details while you scan"
+                body="Take a meal photo and say the extra context naturally: for example, “There was one tablespoon of oil and sweet tea”."
+              />
 
               <div className="capture-grid">
                 {CALORIE_CAPTURE_MODES.map((mode) => {
                   const isVoice = mode.id === 'voice';
+                  const isManual = mode.id === 'manual';
                   const isActive = captureState.lastSource === mode.id;
 
                   return (
@@ -2416,12 +2755,18 @@ export default function App() {
                       key={mode.id}
                       type="button"
                       className={['capture-card', isActive ? 'is-active' : ''].filter(Boolean).join(' ')}
-                      onClick={isVoice ? startVoiceCapture : openPhotoPicker}
+                      onClick={isVoice ? startVoiceCapture : isManual ? focusManualCapture : openPhotoPicker}
                     >
                       <span className="capture-icon material-symbols-outlined">{mode.icon}</span>
                       <strong>{mode.title}</strong>
                       <p>{mode.body}</p>
-                      <small>{isVoice ? voiceStatusLabel : captureState.photoName ? 'Photo ready' : 'Camera ready'}</small>
+                      <small>
+                        {isVoice
+                          ? voiceStatusLabel
+                          : isManual
+                            ? captureState.manualNote.trim() ? 'Text ready' : 'Type naturally'
+                            : captureState.photoName ? 'Photo attached' : 'Camera ready'}
+                      </small>
                     </button>
                   );
                 })}
@@ -2438,9 +2783,13 @@ export default function App() {
 
               <div className="capture-status">
                 <div className="capture-status-head">
-                  <strong>Prepared for real calorie recognition</strong>
-                  <span>{captureState.lastSource ? `Source: ${captureState.lastSource}` : 'Awaiting capture'}</span>
+                  <strong>Prepared for real OpenAI meal recognition</strong>
+                  <span>
+                    {captureState.photoName && combinedCaptureNote ? 'Hybrid input ready' : captureState.lastSource ? `Source: ${captureState.lastSource}` : 'Awaiting capture'}
+                  </span>
                 </div>
+
+                {captureState.photoDataUrl ? <img src={captureState.photoDataUrl} alt={captureState.photoName || 'Meal preview'} className="capture-preview" /> : null}
 
                 <div className="capture-status-line">
                   <span className="material-symbols-outlined">imagesmode</span>
@@ -2452,13 +2801,29 @@ export default function App() {
                   <p>{captureState.voiceTranscript || 'Voice meal text will appear here after transcription.'}</p>
                 </div>
 
+                <label className="field">
+                  <span>Meal details or extra context</span>
+                  <input
+                    ref={manualNoteInputRef}
+                    type="text"
+                    value={captureState.manualNote}
+                    onChange={(event) => updateCaptureField('manualNote', event.target.value)}
+                    placeholder="Example: two sandwiches with tea, 1 tbsp oil, extra cheese"
+                  />
+                </label>
+
+                <div className="capture-status-line">
+                  <span className="material-symbols-outlined">edit_note</span>
+                  <p>{captureState.manualNote.trim() || 'Typed meal details will appear here if you want to log food without camera or mic.'}</p>
+                </div>
+
                 <p className="capture-note">{captureState.providerHint}</p>
               </div>
 
               <div className="provider-grid">
-                <span className="provider-pill">OpenAI vision / parsing</span>
+                <span className="provider-pill">OpenAI vision + natural language</span>
                 <span className="provider-pill">Supabase edge function</span>
-                <span className="provider-pill">Nutrition API layer</span>
+                <span className="provider-pill">BJU + glycemic insight</span>
               </div>
 
               <div className="sync-actions">
@@ -2475,7 +2840,21 @@ export default function App() {
                 </button>
               </div>
 
-              {analysisState.status !== 'idle' ? (
+              {analysisState.status === 'error' && !analysisState.result ? (
+                <StateCard
+                  tone="warm"
+                  icon="error"
+                  eyebrow="ANALYSIS BLOCKED"
+                  title="The meal request did not finish yet"
+                  body={analysisState.error || 'Meal analysis is still missing a valid AI response.'}
+                  actionLabel="Try again"
+                  onAction={runMealAnalysis}
+                  secondaryActionLabel={!cloudState.user ? 'Open account center' : undefined}
+                  onSecondaryAction={!cloudState.user ? openAccountCenter : undefined}
+                />
+              ) : null}
+
+              {analysisState.status !== 'idle' && analysisState.result ? (
                 <div className="analysis-card">
                   <div className="analysis-head">
                     <div>
@@ -2487,43 +2866,124 @@ export default function App() {
                     </span>
                   </div>
 
-                  {analysisState.error ? (
-                    <p className="analysis-error">{analysisState.error}</p>
+                  <div className="analysis-total">
+                    <strong>{analysisState.result.totalCalories ?? '—'}</strong>
+                    <span>estimated kcal</span>
+                  </div>
+
+                  <div className="macro-summary-grid analysis-macro-grid">
+                    {formatMacros(analyzedMacros).map((macro) => (
+                      <article key={macro.key} className="macro-summary-card">
+                        <span>{macro.label}</span>
+                        <strong>{macro.value}{macro.unit}</strong>
+                        <small>{analysisState.result.provider || 'AI estimate'}</small>
+                      </article>
+                    ))}
+                  </div>
+
+                  {energyPrediction || metabolicNote ? (
+                    <div className="analysis-note-stack">
+                      {energyPrediction ? (
+                        <StateCard
+                          compact
+                          tone="neutral"
+                          icon="bolt"
+                          eyebrow="ENERGY FORECAST"
+                          title="After-meal prediction"
+                          body={energyPrediction}
+                        />
+                      ) : null}
+
+                      {metabolicNote ? (
+                        <StateCard
+                          compact
+                          tone="warm"
+                          icon="bloodtype"
+                          eyebrow="GLYCEMIC NOTE"
+                          title="How to smooth the response"
+                          body={metabolicNote}
+                        />
+                      ) : null}
+                    </div>
                   ) : null}
 
-                  {analysisState.result ? (
-                    <>
-                      <div className="analysis-total">
-                        <strong>{analysisState.result.totalCalories ?? '—'}</strong>
-                        <span>estimated kcal</span>
-                      </div>
-
-                      <div className="analysis-food-list">
-                        {analysisState.result.foods?.map((food, index) => (
-                          <article key={`${food.name}-${index}`} className="analysis-food">
-                            <strong>{food.name}</strong>
-                            <span>{food.quantityText || 'Serving pending'}</span>
-                            <small>{Number.isFinite(food.calories) ? `${food.calories} kcal` : 'Needs nutrition provider'}</small>
-                          </article>
-                        ))}
-                      </div>
-                    </>
-                  ) : null}
+                  <div className="analysis-food-list">
+                    {analysisState.result.foods?.map((food, index) => (
+                      <article key={`${food.name}-${index}`} className="analysis-food">
+                        <strong>{food.name}</strong>
+                        <span>{food.quantityText || 'Serving pending'}</span>
+                        <small>
+                          {Number.isFinite(food.calories) ? `${food.calories} kcal` : 'Needs nutrition provider'}
+                          {' • '}
+                          P {Math.round(food.protein || 0)} / F {Math.round(food.fat || 0)} / C {Math.round(food.carbs || 0)}
+                        </small>
+                      </article>
+                    ))}
+                  </div>
                 </div>
               ) : null}
 
               <div className="capture-flow">
                 <div className="capture-flow-step">
                   <span>1</span>
-                  <p>Capture one meal by camera or microphone.</p>
+                  <p>Take a photo and optionally describe oil, sauces, sugar or portions by voice.</p>
                 </div>
                 <div className="capture-flow-step">
                   <span>2</span>
-                  <p>Run vision or transcription, then map items to a nutrition provider.</p>
+                  <p>OpenAI parses the meal, then maps foods into calories and BJU.</p>
                 </div>
                 <div className="capture-flow-step">
                   <span>3</span>
-                  <p>Let the user confirm serving sizes before calories are saved.</p>
+                  <p>The app predicts energy and sugar response, then helps you close the day calmly.</p>
+                </div>
+              </div>
+            </section>
+
+            <section className="section-card">
+              <div className="section-head">
+                <div>
+                  <span className="eyebrow">SMART CHEF</span>
+                  <h2>What should I eat?</h2>
+                </div>
+                <span className="metric-pill">{Math.max(0, calorieRemaining)} kcal left</span>
+              </div>
+
+              <div className="smart-chef-shell">
+                <div className="smart-chef-summary">
+                  <article className="macro-summary-card">
+                    <span>Protein gap</span>
+                    <strong>{proteinGap}g</strong>
+                    <small>toward target</small>
+                  </article>
+                  <article className="macro-summary-card">
+                    <span>Carb gap</span>
+                    <strong>{carbsGap}g</strong>
+                    <small>toward target</small>
+                  </article>
+                  <article className="macro-summary-card">
+                    <span>Fat gap</span>
+                    <strong>{fatGap}g</strong>
+                    <small>toward target</small>
+                  </article>
+                </div>
+
+                <label className="field">
+                  <span>What is in the fridge?</span>
+                  <input
+                    type="text"
+                    value={smartChefDraft}
+                    onChange={(event) => setSmartChefDraft(event.target.value)}
+                    placeholder="eggs, greek yogurt, chicken, cucumber, rice"
+                  />
+                </label>
+
+                <div className="insight-stack">
+                  {smartChefIdeas.map((idea) => (
+                    <article key={idea.title} className="insight-line">
+                      <strong>{idea.title}</strong>
+                      <p>{idea.body}</p>
+                    </article>
+                  ))}
                 </div>
               </div>
             </section>
@@ -2571,6 +3031,11 @@ export default function App() {
                           <span>{meal.provider || 'pending provider'}</span>
                           <span>{formatShortDate(new Date(meal.created_at), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
+                        <div className="meal-macro-line">
+                          <span>P {Math.round(meal.total_macros?.protein || 0)}</span>
+                          <span>F {Math.round(meal.total_macros?.fat || 0)}</span>
+                          <span>C {Math.round(meal.total_macros?.carbs || 0)}</span>
+                        </div>
                       </div>
                     </article>
                   ))}
@@ -2586,6 +3051,35 @@ export default function App() {
               )}
 
               {mealHistoryState.error ? <p className="analysis-error">{mealHistoryState.error}</p> : null}
+            </section>
+
+            <section className="section-card">
+              <div className="section-head">
+                <div>
+                  <span className="eyebrow">ACHIEVEMENTS</span>
+                  <h2>Manual unlock library</h2>
+                </div>
+                <span className="metric-pill">{unlockedAchievementCount}/{ACHIEVEMENT_LIBRARY.length} active</span>
+              </div>
+
+              <div className="achievement-grid">
+                {ACHIEVEMENT_LIBRARY.map((achievement) => {
+                  const isUnlocked = Boolean(state.achievements?.[achievement.id]);
+
+                  return (
+                    <article key={achievement.id} className={['achievement-card', isUnlocked ? 'is-unlocked' : ''].filter(Boolean).join(' ')}>
+                      <div className="achievement-topline">
+                        <span className="material-symbols-outlined">{achievement.icon}</span>
+                        <button type="button" className={isUnlocked ? 'ghost-button' : 'primary-button'} onClick={() => toggleAchievement(achievement.id)}>
+                          {isUnlocked ? 'Remove' : 'Add'}
+                        </button>
+                      </div>
+                      <strong>{achievement.title}</strong>
+                      <p>{achievement.body}</p>
+                    </article>
+                  );
+                })}
+              </div>
             </section>
 
             <section className="section-card">

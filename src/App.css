@@ -775,6 +775,53 @@
   font-size: 1.12rem;
 }
 
+.macro-summary-grid,
+.smart-chef-summary,
+.achievement-grid,
+.analysis-note-stack {
+  display: grid;
+  gap: 12px;
+}
+
+.macro-summary-grid,
+.smart-chef-summary {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.macro-summary-grid {
+  margin-top: 16px;
+}
+
+.analysis-note-stack,
+.achievement-grid {
+  margin-top: 14px;
+}
+
+.macro-summary-card,
+.achievement-card {
+  padding: 14px;
+  border-radius: 22px;
+  border: 1px solid rgba(124, 106, 91, 0.08);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.macro-summary-card span,
+.macro-summary-card small,
+.achievement-card p {
+  color: var(--muted);
+}
+
+.macro-summary-card strong,
+.achievement-card strong {
+  display: block;
+  margin-top: 6px;
+}
+
+.macro-summary-card small {
+  display: block;
+  margin-top: 6px;
+}
+
 .capture-grid,
 .capture-flow {
   display: grid;
@@ -840,6 +887,14 @@
   padding: 16px;
   border-radius: 24px;
   border: 1px solid rgba(124, 106, 91, 0.08);
+}
+
+.capture-preview {
+  width: 100%;
+  max-height: 220px;
+  margin: 0 0 12px;
+  border-radius: 22px;
+  object-fit: cover;
 }
 
 .capture-status-head {
@@ -1048,6 +1103,10 @@
   margin-top: 4px;
 }
 
+.analysis-macro-grid {
+  margin-top: 0;
+}
+
 .analysis-error {
   color: #be3d17;
 }
@@ -1211,6 +1270,38 @@
   line-height: 1.5;
 }
 
+.smart-chef-shell {
+  display: grid;
+  gap: 14px;
+}
+
+.achievement-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.achievement-card.is-unlocked {
+  border-color: rgba(239, 106, 46, 0.18);
+  background: linear-gradient(180deg, rgba(255, 248, 240, 0.96), rgba(255, 255, 255, 0.82));
+}
+
+.achievement-topline {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.achievement-topline .material-symbols-outlined {
+  color: var(--accent);
+}
+
+.achievement-topline .primary-button,
+.achievement-topline .ghost-button {
+  flex: 0 0 auto;
+  padding: 10px 14px;
+}
+
 .toggle-pill {
   display: inline-flex;
   align-items: center;
@@ -1286,6 +1377,17 @@
 .meal-meta {
   margin-top: 8px;
   font-size: 0.78rem;
+}
+
+.meal-macro-line {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 0.78rem;
+}
+
+.meal-macro-line span {
+  color: var(--muted);
 }
 
 .visually-hidden {
@@ -1692,7 +1794,10 @@ button:disabled {
   .capture-flow,
   .provider-grid,
   .auth-mode-row,
-  .account-stat-grid {
+  .account-stat-grid,
+  .macro-summary-grid,
+  .smart-chef-summary,
+  .achievement-grid {
     grid-template-columns: 1fr;
   }
 
@@ -1713,7 +1818,9 @@ button:disabled {
   .recovery-card,
   .password-panel-head,
   .meal-topline,
-  .meal-meta {
+  .meal-meta,
+  .meal-macro-line,
+  .achievement-topline {
     flex-direction: column;
   }
 
