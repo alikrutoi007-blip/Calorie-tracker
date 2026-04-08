@@ -1,6 +1,13 @@
+import Constants from 'expo-constants'
 import { Platform } from 'react-native'
 
+function isExpoGo() {
+  return Constants.executionEnvironment === 'storeClient' || Constants.appOwnership === 'expo'
+}
+
 async function getHealthkitModule() {
+  if (isExpoGo()) return null
+
   try {
     return await import('@kingstinct/react-native-healthkit')
   } catch {
@@ -20,6 +27,14 @@ export async function connectHealthkitPreview() {
       ok: false,
       status: 'unavailable',
       message: 'HealthKit is only available on iPhone.',
+    }
+  }
+
+  if (isExpoGo()) {
+    return {
+      ok: false,
+      status: 'expo_go',
+      message: 'HealthKit is disabled in Expo Go. Use an EAS dev build later for the real iPhone HealthKit lane.',
     }
   }
 
@@ -65,6 +80,14 @@ export async function getHealthkitSnapshotPreview() {
       sleepHours: 0,
       calories: 0,
       source: 'unsupported',
+    }
+  }
+
+  if (isExpoGo()) {
+    return {
+      sleepHours: 6.9,
+      calories: 1720,
+      source: 'expo-go-preview',
     }
   }
 
