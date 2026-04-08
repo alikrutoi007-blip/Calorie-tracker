@@ -6,6 +6,7 @@ type MealRequest = {
   transcript?: string;
   imageDataUrl?: string;
   imageName?: string;
+  storagePath?: string;
   locale?: string;
   dateKey?: string;
 };
@@ -216,11 +217,14 @@ Deno.serve(async (req) => {
         .insert({
           user_id: user.id,
           source: body.source,
+          summary: parsed.summary || 'Meal captured',
           transcript: body.transcript || null,
           image_name: body.imageName || null,
+          storage_path: body.storagePath || null,
           provider: nutrition.provider,
           total_calories: nutrition.totalCalories,
           foods: nutrition.foods,
+          date_key: body.dateKey || null,
           raw_payload: {
             mealParse: parsed,
             nutrition: nutrition.raw,

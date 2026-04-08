@@ -750,7 +750,8 @@
 
 .provider-grid,
 .analysis-food-list,
-.sync-shell {
+.sync-shell,
+.meal-history-list {
   display: grid;
   gap: 12px;
 }
@@ -781,6 +782,28 @@
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.auth-mode-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.segment-button {
+  padding: 13px 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(124, 106, 91, 0.08);
+  background: rgba(255, 255, 255, 0.68);
+  color: var(--muted);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.segment-button.is-active {
+  background: rgba(239, 106, 46, 0.1);
+  color: var(--accent);
+  box-shadow: 0 10px 18px rgba(239, 106, 46, 0.1);
 }
 
 .sync-actions > * {
@@ -849,6 +872,81 @@
 
 .analysis-error {
   color: #be3d17;
+}
+
+.account-summary-card,
+.meal-card {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  border-radius: 24px;
+  border: 1px solid rgba(124, 106, 91, 0.08);
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.account-summary-card {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.account-summary-card h3 {
+  margin: 6px 0 4px;
+  font-family: 'Manrope', 'Segoe UI', sans-serif;
+  font-size: 1.18rem;
+}
+
+.account-summary-card p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.meal-thumb {
+  width: 72px;
+  height: 72px;
+  border-radius: 20px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: rgba(124, 106, 91, 0.08);
+}
+
+.meal-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.meal-topline,
+.meal-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.meal-topline strong,
+.meal-meta span:first-child {
+  overflow-wrap: anywhere;
+}
+
+.meal-topline strong {
+  font-size: 0.98rem;
+}
+
+.meal-topline span {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.85rem;
+}
+
+.meal-copy p,
+.meal-meta span {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.meal-meta {
+  margin-top: 8px;
+  font-size: 0.78rem;
 }
 
 .visually-hidden {
@@ -1243,7 +1341,8 @@ button:disabled {
 
   .capture-grid,
   .capture-flow,
-  .provider-grid {
+  .provider-grid,
+  .auth-mode-row {
     grid-template-columns: 1fr;
   }
 
@@ -1253,8 +1352,17 @@ button:disabled {
   }
 
   .analysis-head,
-  .sync-actions {
+  .sync-actions,
+  .meal-card,
+  .account-summary-card,
+  .meal-topline,
+  .meal-meta {
     flex-direction: column;
+  }
+
+  .meal-thumb {
+    width: 100%;
+    height: 168px;
   }
 
   .chart-card {

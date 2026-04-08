@@ -1,13 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import './App.css';
 import { clearAppState, loadAppState, saveAppState } from './lib/appDb';
 import {
+  fetchCloudProfile,
+  fetchMealCaptures,
   getCloudSession,
   onCloudAuthChange,
   pullCloudSnapshot,
   pushCloudSnapshot,
-  sendMagicLink,
+  signInWithPassword,
+  signUpWithPassword,
   signOutFromCloud,
+  updateCloudProfile,
+  uploadMealPhoto,
 } from './lib/cloudSync';
 import { analyzeMealCapture } from './lib/mealAnalysis';
 import { isSupabaseConfigured } from './lib/supabaseClient';
@@ -510,6 +515,7 @@ export default function App() {
   const [captureState, setCaptureState] = useState({
     photoName: '',
     photoDataUrl: '',
+    photoFile: null,
     voiceStatus: 'idle',
     voiceTranscript: '',
     providerHint: 'Ready for a real AI meal pipeline: capture, parse, confirm, save.',
@@ -517,23 +523,41 @@ export default function App() {
   });
   const initialDateKeyRef = useRef(selectedDateKey);
   const autoSyncTimerRef = useRef(null);
-  const [cloudEmail, setCloudEmail] = useState('');
+  const [authDraft, setAuthDraft] = useState({
+    email: '',
+    password: '',
+    displayName: '',
+    mode: 'signin',
+  });
+  const [accountDraft, setAccountDraft] = useState({
+    displayName: '',
+    intention: '',
+  });
   const [cloudState, setCloudState] = useState({
     configured: isSupabaseConfigured,
     status: isSupabaseConfigured ? 'checking' : 'setup_required',
     session: null,
     user: null,
+    profile: null,
     lastSyncedAt: '',
     error: '',
-    isSendingLink: false,
+    isAuthenticating: false,
+    isSavingProfile: false,
     isSyncing: false,
     isRestoring: false,
+  });
+  const [mealHistory, setMealHistory] = useState([]);
+  const [mealHistoryState, setMealHistoryState] = useState({
+    isLoading: false,
+    error: '',
   });
   const [analysisState, setAnalysisState] = useState({
     status: 'idle',
     error: '',
     result: null,
   });
+  const [isCloudBootstrapping, setIsCloudBootstrapping] = useState(false);
+  const latestStateRef = useRef(state);
 
   const weekDays = useMemo(() => getRecentDays(RHYTHM_DAYS), []);
   const todayKey = weekDays[weekDays.length - 1]?.key || formatDateKey(new Date());
@@ -571,6 +595,7 @@ export default function App() {
 
   useEffect(() => {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    latestStateRef.current = state;
 
     if (!hasHydratedDb) return;
 
@@ -582,6 +607,85 @@ export default function App() {
   useEffect(() => () => {
     recognitionRef.current?.stop?.();
   }, []);
+
+  async function refreshMealHistory(userId) {
+    if (!userId) {
+      setMealHistory([]);
+      return;
+    }
+
+    setMealHistoryState({ isLoading: true, error: '' });
+
+    try {
+      const meals = await fetchMealCaptures(userId, { limit: 18 });
+      setMealHistory(meals);
+      setMealHistoryState({ isLoading: false, error: '' });
+    } catch (error) {
+      setMealHistory([]);
+      setMealHistoryState({
+        isLoading: false,
+        error: error instanceof Error ? error.message : 'Meal history could not be loaded.',
+      });
+    }
+  }
+
+  const bootstrapSignedInUser = useEffectEvent(async (user, options = {}) => {
+    if (!user) return;
+
+    const shouldPreferCloud = options.preferCloudSnapshot !== false;
+    setIsCloudBootstrapping(true);
+
+    try {
+      const profile = await fetchCloudProfile(user.id);
+
+      setCloudState((previous) => ({
+        ...previous,
+        profile,
+        error: '',
+      }));
+
+      setAccountDraft({
+        displayName: profile?.display_name || latestStateRef.current.profile.name || '',
+        intention: latestStateRef.current.profile.intention || '',
+      });
+
+      const snapshot = await pullCloudSnapshot(user.id);
+
+      if (shouldPreferCloud && snapshot?.payload) {
+        const normalized = normalizeState(snapshot.payload);
+        setState(normalized);
+        setShowOnboarding(!normalized.profile.onboardingComplete);
+        const entry = normalized.journal.find((item) => item.dateKey === selectedDateKey);
+        setJournalDraft(entry?.text || '');
+        setAccountDraft({
+          displayName: profile?.display_name || normalized.profile.name || '',
+          intention: normalized.profile.intention || '',
+        });
+        setCloudState((previous) => ({
+          ...previous,
+          lastSyncedAt: snapshot.updated_at || previous.lastSyncedAt,
+          error: '',
+        }));
+      } else {
+        const synced = await pushCloudSnapshot(user.id, latestStateRef.current);
+        setCloudState((previous) => ({
+          ...previous,
+          lastSyncedAt: synced?.updated_at || new Date().toISOString(),
+          error: '',
+        }));
+      }
+
+      await refreshMealHistory(user.id);
+    } catch (error) {
+      setCloudState((previous) => ({
+        ...previous,
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Cloud account could not be prepared.',
+      }));
+    } finally {
+      setIsCloudBootstrapping(false);
+    }
+  });
 
   useEffect(() => {
     let isCancelled = false;
@@ -601,10 +705,15 @@ export default function App() {
           session,
           user,
           status: user ? 'authenticated' : 'ready',
+          profile: previous.profile,
           error: '',
         }));
 
-        if (user?.email) setCloudEmail(user.email);
+        if (user?.email) {
+          setAuthDraft((previous) => ({ ...previous, email: user.email }));
+        }
+
+        if (user) await bootstrapSignedInUser(user);
       } catch (error) {
         if (isCancelled) return;
 
@@ -625,10 +734,25 @@ export default function App() {
         session,
         user,
         status: user ? 'authenticated' : 'ready',
+        profile: user ? previous.profile : null,
         error: '',
       }));
 
-      if (user?.email) setCloudEmail(user.email);
+      if (user?.email) {
+        setAuthDraft((previous) => ({ ...previous, email: user.email }));
+      }
+
+      if (!user) {
+        setMealHistory([]);
+        setMealHistoryState({ isLoading: false, error: '' });
+        setAccountDraft({
+          displayName: latestStateRef.current.profile.name || '',
+          intention: latestStateRef.current.profile.intention || '',
+        });
+        return;
+      }
+
+      bootstrapSignedInUser(user);
     });
 
     return () => {
@@ -636,6 +760,15 @@ export default function App() {
       unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (cloudState.user) return;
+
+    setAccountDraft({
+      displayName: state.profile.name || '',
+      intention: state.profile.intention || '',
+    });
+  }, [cloudState.user, state.profile.intention, state.profile.name]);
 
   const selectedHabitCount = countHabitsForDay(state.habits, selectedDateKey);
   const todayHabitCount = countHabitsForDay(state.habits, todayKey);
@@ -661,7 +794,7 @@ export default function App() {
   const selectedJournalEntry = state.journal.find((entry) => entry.dateKey === selectedDateKey);
   const recentJournalEntries = [...state.journal].sort((left, right) => new Date(right.createdAt) - new Date(left.createdAt)).slice(0, 3);
   const nudgeText = getSuggestedNudge(totalHabits, todayHabitCount);
-  const profileName = state.profile.name || 'there';
+  const profileName = state.profile.name || cloudState.profile?.display_name || 'there';
   const isStandalone = typeof window !== 'undefined' && (window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone);
   const voiceStatusLabel = {
     idle: 'Mic ready',
@@ -670,7 +803,7 @@ export default function App() {
     unavailable: 'Native mic later',
     error: 'Mic blocked',
   }[captureState.voiceStatus];
-  const cloudUserEmail = cloudState.user?.email || cloudEmail;
+  const cloudUserEmail = cloudState.user?.email || authDraft.email;
   const cloudStatusLabel = cloudState.user
     ? 'Cloud live'
     : cloudState.configured
@@ -685,10 +818,12 @@ export default function App() {
       })}`
     : cloudState.user
       ? 'Cloud backup is available for this account.'
-      : 'Connect email magic link to unlock cross-device backup.';
+      : 'Sign in with email and password to unlock cross-device backup.';
+  const mealsForSelectedDay = mealHistory.filter((meal) => meal.date_key === selectedDateKey);
+  const visibleMeals = mealsForSelectedDay.length ? mealsForSelectedDay : mealHistory.slice(0, 6);
 
   useEffect(() => {
-    if (!cloudState.user || !hasHydratedDb) return undefined;
+    if (!cloudState.user || !hasHydratedDb || isCloudBootstrapping) return undefined;
 
     if (autoSyncTimerRef.current) window.clearTimeout(autoSyncTimerRef.current);
 
@@ -711,7 +846,7 @@ export default function App() {
     return () => {
       if (autoSyncTimerRef.current) window.clearTimeout(autoSyncTimerRef.current);
     };
-  }, [cloudState.user, hasHydratedDb, state]);
+  }, [cloudState.user, hasHydratedDb, isCloudBootstrapping, state]);
 
   function launchBurst(element, color) {
     const rect = element.getBoundingClientRect();
@@ -880,6 +1015,7 @@ export default function App() {
         ...previous,
         photoName: file.name,
         photoDataUrl: typeof photoDataUrl === 'string' ? photoDataUrl : '',
+        photoFile: file,
         lastSource: 'photo',
         providerHint: 'Photo captured. Next step: detect foods, estimate servings, then let the user confirm calories.',
       }));
@@ -969,29 +1105,63 @@ export default function App() {
     recognition.start();
   }
 
-  async function requestMagicLink() {
-    const email = cloudEmail.trim();
-    if (!email) {
-      setCloudState((previous) => ({ ...previous, error: 'Enter your email first so I know where to send the magic link.' }));
+  function updateAuthDraft(field, value) {
+    setAuthDraft((previous) => ({ ...previous, [field]: value }));
+  }
+
+  function updateAccountDraft(field, value) {
+    setAccountDraft((previous) => ({ ...previous, [field]: value }));
+  }
+
+  async function handlePasswordAuth(mode) {
+    const email = authDraft.email.trim();
+    const password = authDraft.password;
+
+    if (!email || !password) {
+      setCloudState((previous) => ({ ...previous, error: 'Enter both email and password first.' }));
       return;
     }
 
-    setCloudState((previous) => ({ ...previous, isSendingLink: true, error: '' }));
+    if (mode === 'signup' && !authDraft.displayName.trim()) {
+      setCloudState((previous) => ({ ...previous, error: 'Add your name so the profile feels personal from day one.' }));
+      return;
+    }
+
+    setCloudState((previous) => ({ ...previous, isAuthenticating: true, error: '' }));
 
     try {
-      await sendMagicLink(email);
+      if (mode === 'signup') {
+        const data = await signUpWithPassword({
+          email,
+          password,
+          displayName: authDraft.displayName.trim(),
+        });
+
+        if (!data.session && data.user) {
+          setCloudState((previous) => ({
+            ...previous,
+            isAuthenticating: false,
+            status: 'ready',
+            error: 'Account created. If Supabase asks for email confirmation, confirm once and then sign in.',
+          }));
+          return;
+        }
+      } else {
+        await signInWithPassword({ email, password });
+      }
+
       setCloudState((previous) => ({
         ...previous,
-        isSendingLink: false,
-        status: 'magic_link_sent',
+        isAuthenticating: false,
+        status: 'authenticated',
         error: '',
       }));
     } catch (error) {
       setCloudState((previous) => ({
         ...previous,
-        isSendingLink: false,
+        isAuthenticating: false,
         status: 'error',
-        error: error instanceof Error ? error.message : 'Magic link could not be sent.',
+        error: error instanceof Error ? error.message : 'Account auth failed.',
       }));
     }
   }
@@ -1049,6 +1219,10 @@ export default function App() {
       setShowOnboarding(!normalized.profile.onboardingComplete);
       const entry = normalized.journal.find((item) => item.dateKey === selectedDateKey);
       setJournalDraft(entry?.text || '');
+      setAccountDraft({
+        displayName: cloudState.profile?.display_name || normalized.profile.name || '',
+        intention: normalized.profile.intention || '',
+      });
 
       setCloudState((previous) => ({
         ...previous,
@@ -1069,10 +1243,14 @@ export default function App() {
   async function disconnectCloud() {
     try {
       await signOutFromCloud();
+      setMealHistory([]);
+      setMealHistoryState({ isLoading: false, error: '' });
+      setAuthDraft((previous) => ({ ...previous, password: '' }));
       setCloudState((previous) => ({
         ...previous,
         session: null,
         user: null,
+        profile: null,
         status: 'ready',
         error: '',
       }));
@@ -1081,6 +1259,45 @@ export default function App() {
         ...previous,
         status: 'error',
         error: error instanceof Error ? error.message : 'Cloud sign out failed.',
+      }));
+    }
+  }
+
+  async function saveAccountProfile() {
+    const displayName = accountDraft.displayName.trim();
+    const intention = accountDraft.intention.trim();
+
+    setState((previous) => ({
+      ...previous,
+      profile: {
+        ...previous.profile,
+        name: displayName,
+        intention,
+      },
+    }));
+
+    if (!cloudState.user) return;
+
+    setCloudState((previous) => ({ ...previous, isSavingProfile: true, error: '' }));
+
+    try {
+      const profile = await updateCloudProfile(cloudState.user.id, {
+        email: cloudState.user.email,
+        display_name: displayName,
+      });
+
+      setCloudState((previous) => ({
+        ...previous,
+        profile,
+        isSavingProfile: false,
+        error: '',
+      }));
+    } catch (error) {
+      setCloudState((previous) => ({
+        ...previous,
+        isSavingProfile: false,
+        status: 'error',
+        error: error instanceof Error ? error.message : 'Profile could not be saved.',
       }));
     }
   }
@@ -1098,11 +1315,18 @@ export default function App() {
     setAnalysisState({ status: 'loading', error: '', result: null });
 
     try {
+      let storagePath;
+
+      if (captureState.photoFile && cloudState.user) {
+        storagePath = await uploadMealPhoto(cloudState.user.id, captureState.photoFile);
+      }
+
       const result = await analyzeMealCapture({
         source: captureState.lastSource || (captureState.photoDataUrl ? 'photo' : 'voice'),
         transcript: captureState.voiceTranscript.trim(),
         imageDataUrl: captureState.photoDataUrl || undefined,
         imageName: captureState.photoName || undefined,
+        storagePath,
         locale: typeof navigator !== 'undefined' ? navigator.language : 'en-US',
         dateKey: selectedDateKey,
       });
@@ -1117,6 +1341,33 @@ export default function App() {
       }
 
       setAnalysisState({ status: 'complete', error: '', result });
+
+      if (result.totalCalories) {
+        setState((previous) => {
+          const currentValue = Number(previous.calories.entries?.[selectedDateKey]) || 0;
+          return {
+            ...previous,
+            calories: {
+              ...previous.calories,
+              entries: {
+                ...previous.calories.entries,
+                [selectedDateKey]: clamp(currentValue + result.totalCalories, 0, 10000),
+              },
+            },
+          };
+        });
+      }
+
+      setCaptureState((previous) => ({
+        ...previous,
+        providerHint: result.totalCalories
+          ? `${result.totalCalories} kcal added to ${selectedDayLabel.toLowerCase()}.`
+          : 'Meal parsed. Add a nutrition provider for calorie estimates.',
+      }));
+
+      if (cloudState.user) {
+        await refreshMealHistory(cloudState.user.id);
+      }
     } catch (error) {
       setAnalysisState({
         status: 'error',
@@ -1128,7 +1379,16 @@ export default function App() {
 
   function applyAnalyzedCalories() {
     if (!analysisState.result?.totalCalories) return;
-    updateCalories(String(analysisState.result.totalCalories));
+    setState((previous) => ({
+      ...previous,
+      calories: {
+        ...previous.calories,
+        entries: {
+          ...previous.calories.entries,
+          [selectedDateKey]: clamp(analysisState.result.totalCalories, 0, 10000),
+        },
+      },
+    }));
   }
 
   function saveJournalEntry() {
@@ -1491,7 +1751,7 @@ export default function App() {
                   onClick={applyAnalyzedCalories}
                   disabled={!analysisState.result?.totalCalories}
                 >
-                  Use estimate
+                  Replace day total
                 </button>
               </div>
 
@@ -1546,6 +1806,55 @@ export default function App() {
                   <p>Let the user confirm serving sizes before calories are saved.</p>
                 </div>
               </div>
+            </section>
+
+            <section className="section-card">
+              <div className="section-head">
+                <div>
+                  <span className="eyebrow">MEAL LOG</span>
+                  <h2>{mealsForSelectedDay.length ? `${selectedDayLabel} meals` : 'Recent meal captures'}</h2>
+                </div>
+                <span className="metric-pill">{cloudState.user ? `${visibleMeals.length} shown` : 'Account needed'}</span>
+              </div>
+
+              {!cloudState.user ? (
+                <div className="empty-card">
+                  <strong>Sign in to build meal history</strong>
+                  <p>Each AI capture will save here with calories, foods, and photo previews tied to your account.</p>
+                </div>
+              ) : mealHistoryState.isLoading ? (
+                <div className="empty-card">
+                  <strong>Loading meals</strong>
+                  <p>Pulling your recent captures from Supabase.</p>
+                </div>
+              ) : visibleMeals.length ? (
+                <div className="meal-history-list">
+                  {visibleMeals.map((meal) => (
+                    <article key={meal.id} className="meal-card">
+                      {meal.imageUrl ? <img src={meal.imageUrl} alt={meal.summary || 'Meal capture'} className="meal-thumb" /> : null}
+
+                      <div className="meal-copy">
+                        <div className="meal-topline">
+                          <strong>{meal.summary || meal.transcript || meal.image_name || 'Meal capture'}</strong>
+                          <span>{meal.total_calories ?? '—'} kcal</span>
+                        </div>
+                        <p>{meal.foods?.slice(0, 3).map((food) => food.name).join(' • ') || 'Foods will appear here after parsing.'}</p>
+                        <div className="meal-meta">
+                          <span>{meal.provider || 'pending provider'}</span>
+                          <span>{formatShortDate(new Date(meal.created_at), { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-card">
+                  <strong>No meals saved yet</strong>
+                  <p>Your first photo or voice meal capture will come back here as a reusable food history.</p>
+                </div>
+              )}
+
+              {mealHistoryState.error ? <p className="analysis-error">{mealHistoryState.error}</p> : null}
             </section>
 
             <section className="section-card">
@@ -1641,71 +1950,157 @@ export default function App() {
             <section className="section-card">
               <div className="section-head">
                 <div>
-                  <span className="eyebrow">CLOUD SYNC</span>
-                  <h2>Supabase backup lane</h2>
+                  <span className="eyebrow">ACCOUNT</span>
+                  <h2>Identity, sync, profile</h2>
                 </div>
                 <span className="status-badge">{cloudStatusLabel}</span>
               </div>
 
               <div className="sync-shell">
-                <label className="field">
-                  <span>Email magic link</span>
-                  <input
-                    type="email"
-                    value={cloudEmail}
-                    onChange={(event) => setCloudEmail(event.target.value)}
-                    placeholder="you@example.com"
-                    disabled={!cloudState.configured || Boolean(cloudState.user)}
-                  />
-                </label>
+                {!cloudState.user ? (
+                  <>
+                    <div className="auth-mode-row">
+                      <button
+                        type="button"
+                        className={['segment-button', authDraft.mode === 'signin' ? 'is-active' : ''].filter(Boolean).join(' ')}
+                        onClick={() => updateAuthDraft('mode', 'signin')}
+                      >
+                        Sign in
+                      </button>
+                      <button
+                        type="button"
+                        className={['segment-button', authDraft.mode === 'signup' ? 'is-active' : ''].filter(Boolean).join(' ')}
+                        onClick={() => updateAuthDraft('mode', 'signup')}
+                      >
+                        Create account
+                      </button>
+                    </div>
 
-                <p className="sync-copy">
-                  {cloudUserEmail ? `Connected as ${cloudUserEmail}. ${cloudStatusText}` : cloudStatusText}
-                </p>
+                    {authDraft.mode === 'signup' ? (
+                      <label className="field">
+                        <span>Name</span>
+                        <input
+                          type="text"
+                          value={authDraft.displayName}
+                          onChange={(event) => updateAuthDraft('displayName', event.target.value)}
+                          placeholder="Your name"
+                        />
+                      </label>
+                    ) : null}
 
-                <div className="sync-actions">
-                  <button
-                    type="button"
-                    className="primary-button"
-                    onClick={requestMagicLink}
-                    disabled={!cloudState.configured || cloudState.isSendingLink || Boolean(cloudState.user)}
-                  >
-                    {cloudState.isSendingLink ? 'Sending link...' : cloudState.user ? 'Cloud connected' : 'Send magic link'}
-                  </button>
+                    <label className="field">
+                      <span>Email</span>
+                      <input
+                        type="email"
+                        value={authDraft.email}
+                        onChange={(event) => updateAuthDraft('email', event.target.value)}
+                        placeholder="you@example.com"
+                        disabled={!cloudState.configured}
+                      />
+                    </label>
 
-                  <button
-                    type="button"
-                    className="ghost-button"
-                    onClick={() => syncSnapshotToCloud()}
-                    disabled={!cloudState.user || cloudState.isSyncing}
-                  >
-                    {cloudState.isSyncing ? 'Syncing...' : 'Sync now'}
-                  </button>
-                </div>
+                    <label className="field">
+                      <span>Password</span>
+                      <input
+                        type="password"
+                        value={authDraft.password}
+                        onChange={(event) => updateAuthDraft('password', event.target.value)}
+                        placeholder="At least 6 characters"
+                        disabled={!cloudState.configured}
+                      />
+                    </label>
 
-                <div className="sync-actions">
-                  <button
-                    type="button"
-                    className="ghost-button"
-                    onClick={restoreSnapshotFromCloud}
-                    disabled={!cloudState.user || cloudState.isRestoring}
-                  >
-                    {cloudState.isRestoring ? 'Restoring...' : 'Restore backup'}
-                  </button>
+                    <p className="sync-copy">{cloudStatusText}</p>
 
-                  <button
-                    type="button"
-                    className="ghost-danger"
-                    onClick={disconnectCloud}
-                    disabled={!cloudState.user}
-                  >
-                    Sign out
-                  </button>
-                </div>
+                    <div className="sync-actions">
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={() => handlePasswordAuth(authDraft.mode)}
+                        disabled={!cloudState.configured || cloudState.isAuthenticating}
+                      >
+                        {cloudState.isAuthenticating
+                          ? authDraft.mode === 'signup' ? 'Creating account...' : 'Signing in...'
+                          : authDraft.mode === 'signup' ? 'Create account' : 'Sign in'}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="account-summary-card">
+                      <div>
+                        <span className="eyebrow">SIGNED IN</span>
+                        <h3>{accountDraft.displayName || cloudState.profile?.display_name || profileName}</h3>
+                        <p>{cloudUserEmail}</p>
+                      </div>
+                      <span className="metric-pill">{cloudStatusText}</span>
+                    </div>
+
+                    <label className="field">
+                      <span>Display name</span>
+                      <input
+                        type="text"
+                        value={accountDraft.displayName}
+                        onChange={(event) => updateAccountDraft('displayName', event.target.value)}
+                        placeholder="Display name"
+                      />
+                    </label>
+
+                    <label className="field">
+                      <span>Intention</span>
+                      <input
+                        type="text"
+                        value={accountDraft.intention}
+                        onChange={(event) => updateAccountDraft('intention', event.target.value)}
+                        placeholder="Calm energy, lean routine, better sleep"
+                      />
+                    </label>
+
+                    <div className="sync-actions">
+                      <button
+                        type="button"
+                        className="primary-button"
+                        onClick={saveAccountProfile}
+                        disabled={cloudState.isSavingProfile}
+                      >
+                        {cloudState.isSavingProfile ? 'Saving profile...' : 'Save profile'}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={() => syncSnapshotToCloud()}
+                        disabled={!cloudState.user || cloudState.isSyncing}
+                      >
+                        {cloudState.isSyncing ? 'Syncing...' : 'Sync now'}
+                      </button>
+                    </div>
+
+                    <div className="sync-actions">
+                      <button
+                        type="button"
+                        className="ghost-button"
+                        onClick={restoreSnapshotFromCloud}
+                        disabled={!cloudState.user || cloudState.isRestoring}
+                      >
+                        {cloudState.isRestoring ? 'Restoring...' : 'Restore backup'}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="ghost-danger"
+                        onClick={disconnectCloud}
+                        disabled={!cloudState.user}
+                      >
+                        Sign out
+                      </button>
+                    </div>
+                  </>
+                )}
 
                 <div className="sync-note-card">
                   <strong>What syncs to cloud</strong>
-                  <p>Habits, day history, calories, sleep, journal, and future AI meal captures. Images themselves are prepared for a private storage bucket.</p>
+                  <p>Habits, day history, calories, sleep, journal, profile preferences, and meal captures with private photo storage.</p>
                 </div>
 
                 {cloudState.error ? <p className="analysis-error">{cloudState.error}</p> : null}
