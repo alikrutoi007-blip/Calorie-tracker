@@ -1,7 +1,14 @@
-import Purchases from 'react-native-purchases'
 import Constants from 'expo-constants'
 
 let configuredUserId = ''
+
+async function getPurchasesModule() {
+  try {
+    return (await import('react-native-purchases')).default
+  } catch {
+    return null
+  }
+}
 
 function getRevenueCatApiKey() {
   return globalThis?.process?.env?.EXPO_PUBLIC_REVENUECAT_IOS_API_KEY || Constants.expoConfig?.extra?.revenueCatApiKeyIos || ''
@@ -9,11 +16,12 @@ function getRevenueCatApiKey() {
 
 export async function configureSubscriptions(userId = '') {
   const apiKey = getRevenueCatApiKey()
+  const Purchases = await getPurchasesModule()
 
-  if (!apiKey) {
+  if (!apiKey || !Purchases) {
     return {
       ok: false,
-      message: 'RevenueCat API key is still missing in Expo env or app config.',
+      message: 'RevenueCat native module or API key is missing. Use a dev build plus EXPO_PUBLIC_REVENUECAT_IOS_API_KEY.',
     }
   }
 
@@ -39,8 +47,9 @@ export async function configureSubscriptions(userId = '') {
 
 export async function getSubscriptionPreview(userId = '') {
   const apiKey = getRevenueCatApiKey()
+  const Purchases = await getPurchasesModule()
 
-  if (!apiKey) {
+  if (!apiKey || !Purchases) {
     return {
       configured: false,
       offeringsReady: false,
@@ -74,9 +83,10 @@ export async function getSubscriptionPreview(userId = '') {
 }
 
 export async function startSubscriptionCheckout(userId = '') {
+  const Purchases = await getPurchasesModule()
   const preview = await getSubscriptionPreview(userId)
 
-  if (!preview.configured) {
+  if (!preview.configured || !Purchases) {
     return {
       ok: false,
       message: 'RevenueCat is not configured yet, so checkout stays in preview mode.',
