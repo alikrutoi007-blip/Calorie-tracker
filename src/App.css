@@ -1191,6 +1191,18 @@
   gap: 14px;
 }
 
+.profile-menu-backdrop {
+  place-items: start end;
+  padding:
+    calc(14px + env(safe-area-inset-top, 0px))
+    16px
+    calc(20px + env(safe-area-inset-bottom, 0px));
+}
+
+.profile-menu-sheet {
+  width: min(100%, 390px);
+}
+
 .profile-sheet-summary,
 .profile-sheet-actions {
   gap: 12px;
@@ -1227,6 +1239,69 @@
 .profile-sheet-section {
   display: grid;
   gap: 10px;
+}
+
+.profile-menu-list,
+.settings-section-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.profile-menu-item,
+.settings-section-button {
+  width: 100%;
+  border: 1px solid rgba(124, 106, 91, 0.08);
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.profile-menu-item {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 22px;
+  text-align: left;
+}
+
+.profile-menu-item.is-active,
+.settings-section-button.is-active {
+  border-color: rgba(239, 106, 46, 0.2);
+  background: linear-gradient(180deg, rgba(255, 247, 241, 0.94), rgba(255, 255, 255, 0.84));
+}
+
+.profile-menu-item .material-symbols-outlined,
+.settings-section-button .material-symbols-outlined {
+  color: var(--accent);
+}
+
+.profile-menu-copy {
+  min-width: 0;
+}
+
+.profile-menu-copy strong,
+.settings-section-button strong {
+  display: block;
+}
+
+.profile-menu-copy small,
+.settings-section-button small {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.settings-section-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-section-button {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 22px;
+  text-align: left;
 }
 
 .settings-stack {
@@ -1795,6 +1870,7 @@ button:disabled {
   .provider-grid,
   .auth-mode-row,
   .account-stat-grid,
+  .settings-section-grid,
   .macro-summary-grid,
   .smart-chef-summary,
   .achievement-grid {

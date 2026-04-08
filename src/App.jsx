@@ -111,6 +111,44 @@ const EMAIL_SETTINGS = [
   },
 ];
 
+const SETTINGS_SECTIONS = [
+  {
+    id: 'notifications',
+    label: 'Уведомления',
+    title: 'Push, mail, nudges',
+    description: 'Напоминания, письма и мягкие возвраты в приложение.',
+    icon: 'notifications_active',
+  },
+  {
+    id: 'account',
+    label: 'Настройки аккаунта',
+    title: 'Identity and backup',
+    description: 'Вход, пароль, синхронизация, профиль и восстановление.',
+    icon: 'manage_accounts',
+  },
+  {
+    id: 'app',
+    label: 'Настройки приложения',
+    title: 'Interface feel',
+    description: 'Анимации, поведение интерфейса и локальные предпочтения.',
+    icon: 'tune',
+  },
+  {
+    id: 'about',
+    label: 'About us',
+    title: 'Why Momentum exists',
+    description: 'Идея продукта, ценности и направление развития.',
+    icon: 'favorite',
+  },
+  {
+    id: 'subscriptions',
+    label: 'Подписки',
+    title: 'Pro layer',
+    description: 'Что будет в premium-слое и зачем он нужен.',
+    icon: 'workspace_premium',
+  },
+];
+
 const ACHIEVEMENT_LIBRARY = [
   {
     id: 'first-scan',
@@ -858,23 +896,18 @@ function ProfileSheet({
   cloudUserEmail,
   cloudStatusText,
   cloudState,
-  preferences,
-  onTogglePreference,
-  onOpenAccount,
-  onSync,
-  onRestore,
-  onSignOut,
-  onResetApp,
+  activeSection,
+  onSelectSection,
   onClose,
 }) {
   return (
-    <div className="sheet-backdrop" role="dialog" aria-modal="true">
-      <section className="sheet-card profile-sheet">
+    <div className="sheet-backdrop profile-menu-backdrop" role="dialog" aria-modal="true">
+      <section className="sheet-card profile-sheet profile-menu-sheet">
         <div className="sheet-handle" />
 
         <div className="sheet-head">
           <div>
-            <span className="eyebrow">PROFILE & SETTINGS</span>
+            <span className="eyebrow">PROFILE MENU</span>
             <h2>{profileName}</h2>
           </div>
 
@@ -895,137 +928,22 @@ function ProfileSheet({
           <span className="metric-pill">{cloudState.user ? 'Account live' : 'Guest mode'}</span>
         </div>
 
-        <div className="profile-sheet-actions">
-          <button type="button" className="primary-button" onClick={onOpenAccount}>Open account center</button>
-          <button type="button" className="ghost-button" onClick={onSync} disabled={!cloudState.user || cloudState.isSyncing}>
-            {cloudState.isSyncing ? 'Syncing...' : 'Sync now'}
-          </button>
-        </div>
-
-        <section className="profile-sheet-section">
-          <div className="section-head profile-sheet-headline">
-            <div>
-              <span className="eyebrow">NOTIFICATIONS</span>
-              <h2>Push, mail, nudges</h2>
-            </div>
-            <span className="metric-pill">{cloudState.user ? 'Cloud aware' : 'Local first'}</span>
-          </div>
-
-          <div className="settings-stack">
-            <SettingToggle
-              label="Daily nudges"
-              description="Keep tiny return-friendly reminders visible inside the app."
-              checked={preferences.app.dailyNudges}
-              onToggle={() => onTogglePreference('app', 'dailyNudges')}
-            />
-
-            {EMAIL_SETTINGS.map((setting) => (
-              <SettingToggle
-                key={setting.key}
-                label={setting.label}
-                description={setting.description}
-                checked={preferences.email[setting.key]}
-                disabled={!cloudState.user}
-                onToggle={() => onTogglePreference(setting.section, setting.key)}
-              />
-            ))}
-          </div>
-        </section>
-
-        <section className="profile-sheet-section">
-          <div className="section-head profile-sheet-headline">
-            <div>
-              <span className="eyebrow">ACCOUNT SETTINGS</span>
-              <h2>Identity and backup</h2>
-            </div>
-            <span className="metric-pill">{cloudState.user ? 'Signed in' : 'Guest mode'}</span>
-          </div>
-
-          <div className="profile-sheet-actions">
-            <button type="button" className="ghost-button" onClick={onOpenAccount}>Email & password</button>
-            <button type="button" className="ghost-button" onClick={onRestore} disabled={!cloudState.user || cloudState.isRestoring}>
-              {cloudState.isRestoring ? 'Restoring...' : 'Restore backup'}
+        <div className="profile-menu-list">
+          {SETTINGS_SECTIONS.map((section) => (
+            <button
+              key={section.id}
+              type="button"
+              className={['profile-menu-item', activeSection === section.id ? 'is-active' : ''].filter(Boolean).join(' ')}
+              onClick={() => onSelectSection(section.id)}
+            >
+              <span className="material-symbols-outlined">{section.icon}</span>
+              <span className="profile-menu-copy">
+                <strong>{section.label}</strong>
+                <small>{section.description}</small>
+              </span>
+              <span className="material-symbols-outlined">chevron_right</span>
             </button>
-          </div>
-
-          <StateCard
-            compact
-            tone={cloudState.user ? 'success' : 'neutral'}
-            icon={cloudState.user ? 'cloud_done' : 'person_off'}
-            eyebrow="ACCOUNT STATE"
-            title={cloudState.user ? 'Cloud account connected' : 'Still using local device mode'}
-            body={cloudState.user
-              ? 'Email, meals, sync and recovery are attached to your account.'
-              : 'Create an account when you want cloud sync, history across devices and private storage.'}
-          />
-        </section>
-
-        <section className="profile-sheet-section">
-          <div className="section-head profile-sheet-headline">
-            <div>
-              <span className="eyebrow">APP SETTINGS</span>
-              <h2>Interface feel</h2>
-            </div>
-            <span className="metric-pill">Saved locally</span>
-          </div>
-
-          <div className="settings-stack">
-            {APP_SETTINGS.map((setting) => (
-              <SettingToggle
-                key={setting.key}
-                label={setting.label}
-                description={setting.description}
-                checked={preferences.app[setting.key]}
-                onToggle={() => onTogglePreference(setting.section, setting.key)}
-              />
-            ))}
-          </div>
-        </section>
-
-        <section className="profile-sheet-section">
-          <div className="section-head profile-sheet-headline">
-            <div>
-              <span className="eyebrow">ABOUT US</span>
-              <h2>Why Momentum exists</h2>
-            </div>
-            <span className="metric-pill">Mission</span>
-          </div>
-
-          <StateCard
-            compact
-            tone="neutral"
-            icon="favorite"
-            eyebrow="MOMENTUM"
-            title="We want nutrition to feel light, not punishing"
-            body="The product direction is simple: lower friction, calmer design, smarter food guidance and better consistency on iPhone."
-          />
-        </section>
-
-        <section className="profile-sheet-section">
-          <div className="section-head profile-sheet-headline">
-            <div>
-              <span className="eyebrow">SUBSCRIPTIONS</span>
-              <h2>Pro layer</h2>
-            </div>
-            <span className="metric-pill">Coming next</span>
-          </div>
-
-          <StateCard
-            compact
-            tone="warm"
-            icon="workspace_premium"
-            eyebrow="FREE PLAN"
-            title="Core tracking is live"
-            body="Subscriptions will later unlock deeper AI nutrition, native Health sync, advanced insights and premium coaching loops."
-            actionLabel="Open account center"
-            onAction={onOpenAccount}
-          />
-        </section>
-
-        <div className="profile-sheet-actions is-secondary">
-          <button type="button" className="ghost-danger" onClick={cloudState.user ? onSignOut : onResetApp}>
-            {cloudState.user ? 'Sign out' : 'Reset app'}
-          </button>
+          ))}
         </div>
       </section>
     </div>
@@ -1059,6 +977,7 @@ function GlobalTopBar({ eyebrow, title, subtitle, profileName, statusLabel, onOp
 export default function App() {
   const [state, setState] = useState(() => loadState());
   const [activeTab, setActiveTab] = useState('habits');
+  const [activeSettingsSection, setActiveSettingsSection] = useState('account');
   const [selectedDateKey, setSelectedDateKey] = useState(formatDateKey(new Date()));
   const [showOnboarding, setShowOnboarding] = useState(() => !loadState().profile.onboardingComplete);
   const [hasHydratedDb, setHasHydratedDb] = useState(false);
@@ -1314,7 +1233,8 @@ export default function App() {
         }
 
         if (recoveryMode) {
-          setActiveTab('insights');
+          setActiveSettingsSection('account');
+          setActiveTab('settings');
           setPasswordDraft((previous) => ({ ...previous, nextPassword: '', confirmPassword: '', reauthCode: '' }));
           clearAuthRedirectUrl();
         }
@@ -1362,7 +1282,8 @@ export default function App() {
       }
 
       if (recoveryMode) {
-        setActiveTab('insights');
+        setActiveSettingsSection('account');
+        setActiveTab('settings');
         setPasswordDraft((previous) => ({ ...previous, nextPassword: '', confirmPassword: '', reauthCode: '' }));
         clearAuthRedirectUrl();
       }
@@ -1482,9 +1403,17 @@ export default function App() {
     insights: {
       eyebrow: getGreeting().toUpperCase(),
       title: 'Insights',
-      subtitle: state.profile.intention || 'Account, sync, recovery and weekly clarity.',
+      subtitle: state.profile.intention || 'Weekly clarity, streaks, sleep and return-friendly momentum.',
+    },
+    settings: {
+      eyebrow: 'PROFILE',
+      title: SETTINGS_SECTIONS.find((section) => section.id === activeSettingsSection)?.label || 'Settings',
+      subtitle: cloudState.user
+        ? 'Аккаунт, уведомления и поведение приложения теперь живут отдельно от insights.'
+        : 'Открой вход, настройки приложения и будущие подписки в отдельном пространстве.',
     },
   }[activeTab];
+  const activeSettingsMeta = SETTINGS_SECTIONS.find((section) => section.id === activeSettingsSection) || SETTINGS_SECTIONS[0];
   const smartChefIdeas = buildSmartChefSuggestions({
     remainingCalories: Math.max(0, calorieRemaining),
     proteinGap,
@@ -1865,7 +1794,14 @@ export default function App() {
   }
 
   function openAccountCenter() {
-    setActiveTab('insights');
+    setActiveSettingsSection('account');
+    setActiveTab('settings');
+    setProfileSheetOpen(false);
+  }
+
+  function openSettingsSection(sectionId = 'account') {
+    setActiveSettingsSection(sectionId);
+    setActiveTab('settings');
     setProfileSheetOpen(false);
   }
 
@@ -2487,16 +2423,8 @@ export default function App() {
           cloudUserEmail={cloudUserEmail}
           cloudStatusText={cloudStatusText}
           cloudState={cloudState}
-          preferences={state.preferences}
-          onTogglePreference={togglePreference}
-          onOpenAccount={openAccountCenter}
-          onSync={() => syncSnapshotToCloud()}
-          onRestore={restoreSnapshotFromCloud}
-          onSignOut={() => {
-            setProfileSheetOpen(false);
-            disconnectCloud();
-          }}
-          onResetApp={resetEverything}
+          activeSection={activeSettingsSection}
+          onSelectSection={openSettingsSection}
           onClose={() => setProfileSheetOpen(false)}
         />
       ) : null}
@@ -3110,6 +3038,546 @@ export default function App() {
           </section>
         ) : null}
 
+        {activeTab === 'settings' ? (
+          <section className="tab-view">
+            <section className="hero-panel settings-hero">
+              <div>
+                <span className="eyebrow">SETTINGS SPACE</span>
+                <h2>{activeSettingsMeta.label}</h2>
+                <p>{activeSettingsMeta.description}</p>
+              </div>
+
+              <div className="hero-stats">
+                <div className="hero-chip">
+                  <span>Account</span>
+                  <strong>{cloudState.user ? 'Live' : 'Guest'}</strong>
+                </div>
+                <div className="hero-chip">
+                  <span>Sync</span>
+                  <strong>{cloudState.lastSyncedAt ? 'Ready' : cloudState.user ? 'Waiting' : 'Locked'}</strong>
+                </div>
+              </div>
+            </section>
+
+            <section className="section-card">
+              <div className="section-head">
+                <div>
+                  <span className="eyebrow">SECTIONS</span>
+                  <h2>Choose what to adjust</h2>
+                </div>
+                <span className="metric-pill">{SETTINGS_SECTIONS.length} areas</span>
+              </div>
+
+              <div className="settings-section-grid">
+                {SETTINGS_SECTIONS.map((section) => (
+                  <button
+                    key={section.id}
+                    type="button"
+                    className={['settings-section-button', activeSettingsSection === section.id ? 'is-active' : ''].filter(Boolean).join(' ')}
+                    onClick={() => setActiveSettingsSection(section.id)}
+                  >
+                    <span className="material-symbols-outlined">{section.icon}</span>
+                    <strong>{section.label}</strong>
+                    <small>{section.title}</small>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            {activeSettingsSection === 'notifications' ? (
+              <section className="section-card">
+                <div className="section-head">
+                  <div>
+                    <span className="eyebrow">УВЕДОМЛЕНИЯ</span>
+                    <h2>Push, mail, nudges</h2>
+                  </div>
+                  <span className="metric-pill">{cloudState.user ? 'Cloud aware' : 'Local first'}</span>
+                </div>
+
+                <StateCard
+                  compact
+                  tone="warm"
+                  icon="notifications_active"
+                  eyebrow="RETURN LOOP"
+                  title="Мягкие напоминания вместо давления"
+                  body="Мы держим возврат в приложение лёгким: без чувства вины, с короткими nudges и спокойным email-ритмом."
+                />
+
+                <div className="settings-stack">
+                  <SettingToggle
+                    label="Daily nudges"
+                    description="Keep tiny return-friendly reminders visible inside the app."
+                    checked={state.preferences.app.dailyNudges}
+                    onToggle={() => togglePreference('app', 'dailyNudges')}
+                  />
+
+                  {EMAIL_SETTINGS.map((setting) => (
+                    <SettingToggle
+                      key={setting.key}
+                      label={setting.label}
+                      description={setting.description}
+                      checked={state.preferences.email[setting.key]}
+                      disabled={!cloudState.user}
+                      onToggle={() => togglePreference(setting.section, setting.key)}
+                    />
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            {activeSettingsSection === 'account' ? (
+              <section className="section-card">
+                <div className="section-head">
+                  <div>
+                    <span className="eyebrow">НАСТРОЙКИ АККАУНТА</span>
+                    <h2>Identity, sync, profile</h2>
+                  </div>
+                  <span className="status-badge">{cloudStatusLabel}</span>
+                </div>
+
+                <div className="sync-shell">
+                  {shouldShowConfirmationBanner ? (
+                    <StateCard
+                      tone="warm"
+                      icon="mark_email_unread"
+                      eyebrow="CONFIRM EMAIL"
+                      title="One inbox tap finishes setup"
+                      body="Supabase is waiting for email confirmation before password sign-in can fully unlock."
+                      actionLabel={cloudState.isResendingConfirmation ? 'Sending email...' : 'Resend confirmation'}
+                      onAction={resendConfirmationEmail}
+                      actionDisabled={cloudState.isResendingConfirmation}
+                    />
+                  ) : null}
+
+                  {shouldShowRecoveryBanner ? (
+                    <StateCard
+                      tone="neutral"
+                      icon="password"
+                      eyebrow="RECOVERY SENT"
+                      title="Check your inbox on iPhone"
+                      body="Open the secure recovery link from your email. This app will switch into reset mode automatically."
+                    />
+                  ) : null}
+
+                  {shouldShowSuccessBanner ? (
+                    <StateCard
+                      tone="success"
+                      icon="check_circle"
+                      eyebrow="ACCOUNT READY"
+                      title="Identity and sync are live"
+                      body="You are back in. Cloud backup, meals and account settings can keep moving across devices."
+                    />
+                  ) : null}
+
+                  {cloudState.recoveryMode ? (
+                    <StateCard
+                      tone="warm"
+                      icon="shield_lock"
+                      eyebrow="STEP 2"
+                      title="Finish password reset here"
+                      body="This tab is already holding your recovery session. Set the new password below and the app will close the loop."
+                    />
+                  ) : null}
+
+                  {!cloudState.user ? (
+                    <>
+                      <div className="auth-mode-row">
+                        <button
+                          type="button"
+                          className={['segment-button', authDraft.mode === 'signin' ? 'is-active' : ''].filter(Boolean).join(' ')}
+                          onClick={() => updateAuthDraft('mode', 'signin')}
+                        >
+                          Sign in
+                        </button>
+                        <button
+                          type="button"
+                          className={['segment-button', authDraft.mode === 'signup' ? 'is-active' : ''].filter(Boolean).join(' ')}
+                          onClick={() => updateAuthDraft('mode', 'signup')}
+                        >
+                          Create account
+                        </button>
+                      </div>
+
+                      {authDraft.mode === 'signup' ? (
+                        <label className="field">
+                          <span>Name</span>
+                          <input
+                            type="text"
+                            value={authDraft.displayName}
+                            onChange={(event) => updateAuthDraft('displayName', event.target.value)}
+                            placeholder="Your name"
+                          />
+                        </label>
+                      ) : null}
+
+                      <label className="field">
+                        <span>Email</span>
+                        <input
+                          type="email"
+                          value={authDraft.email}
+                          onChange={(event) => updateAuthDraft('email', event.target.value)}
+                          placeholder="you@example.com"
+                          disabled={!cloudState.configured}
+                        />
+                      </label>
+
+                      <label className="field">
+                        <span>Password</span>
+                        <input
+                          type={authUi.showAuthPassword ? 'text' : 'password'}
+                          value={authDraft.password}
+                          onChange={(event) => updateAuthDraft('password', event.target.value)}
+                          placeholder="At least 6 characters"
+                          disabled={!cloudState.configured}
+                        />
+                      </label>
+
+                      <p className="sync-copy">{cloudStatusText}</p>
+
+                      <div className="sync-actions">
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={() => updateAuthUi('showAuthPassword', !authUi.showAuthPassword)}
+                          disabled={!cloudState.configured}
+                        >
+                          {authUi.showAuthPassword ? 'Hide password' : 'Show password'}
+                        </button>
+
+                        <button
+                          type="button"
+                          className="primary-button"
+                          onClick={() => handlePasswordAuth(authDraft.mode)}
+                          disabled={!cloudState.configured || cloudState.isAuthenticating}
+                        >
+                          {cloudState.isAuthenticating
+                            ? authDraft.mode === 'signup' ? 'Creating account...' : 'Signing in...'
+                            : authDraft.mode === 'signup' ? 'Create account' : 'Sign in'}
+                        </button>
+                      </div>
+
+                      <div className="auth-link-row">
+                        <button
+                          type="button"
+                          className="text-link-button"
+                          onClick={sendRecoveryEmail}
+                          disabled={!cloudState.configured || cloudState.isSendingRecoveryEmail}
+                        >
+                          {cloudState.isSendingRecoveryEmail ? 'Sending recovery...' : 'Forgot password'}
+                        </button>
+
+                        <button
+                          type="button"
+                          className="text-link-button"
+                          onClick={resendConfirmationEmail}
+                          disabled={!cloudState.configured || cloudState.isResendingConfirmation}
+                        >
+                          {cloudState.isResendingConfirmation ? 'Sending email...' : 'Resend confirmation'}
+                        </button>
+                      </div>
+
+                      <div className="account-helper-card">
+                        <strong>{authDraft.mode === 'signup' ? 'Why create an account' : 'Why sign in'}</strong>
+                        <p>Sync habits, calories, sleep, journal and meal history across devices. Your food photos stay in private Supabase storage.</p>
+                        <small className="helper-note">
+                          {authDraft.mode === 'signup'
+                            ? 'If email confirmation is enabled in Supabase, one inbox tap finishes setup.'
+                            : 'Forgot password sends a secure recovery link back to this same screen.'}
+                        </small>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      {cloudState.recoveryMode ? (
+                        <div className="recovery-card">
+                          <div>
+                            <span className="eyebrow">PASSWORD RECOVERY</span>
+                            <h3>Choose a new password</h3>
+                            <p>This secure email link already recognized your account. Finish the reset below, then sync keeps working normally.</p>
+                          </div>
+                          <span className="metric-pill">Secure link</span>
+                        </div>
+                      ) : null}
+
+                      <div className="account-summary-card">
+                        <div>
+                          <span className="eyebrow">{cloudState.recoveryMode ? 'ALMOST THERE' : 'SIGNED IN'}</span>
+                          <h3>{accountDraft.displayName || cloudState.profile?.display_name || profileName}</h3>
+                          <p>{cloudUserEmail}</p>
+                        </div>
+                        <span className="metric-pill">{cloudStatusText}</span>
+                      </div>
+
+                      <div className="account-stat-grid">
+                        {accountStats.map((item) => (
+                          <article key={item.label} className="account-stat-card">
+                            <span>{item.label}</span>
+                            <strong>{item.value}</strong>
+                          </article>
+                        ))}
+                      </div>
+
+                      <label className="field">
+                        <span>Display name</span>
+                        <input
+                          type="text"
+                          value={accountDraft.displayName}
+                          onChange={(event) => updateAccountDraft('displayName', event.target.value)}
+                          placeholder="Display name"
+                        />
+                      </label>
+
+                      <label className="field">
+                        <span>Intention</span>
+                        <input
+                          type="text"
+                          value={accountDraft.intention}
+                          onChange={(event) => updateAccountDraft('intention', event.target.value)}
+                          placeholder="Calm energy, lean routine, better sleep"
+                        />
+                      </label>
+
+                      <div className="sync-actions">
+                        <button
+                          type="button"
+                          className="primary-button"
+                          onClick={saveAccountProfile}
+                          disabled={cloudState.isSavingProfile}
+                        >
+                          {cloudState.isSavingProfile ? 'Saving profile...' : 'Save profile'}
+                        </button>
+
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={() => syncSnapshotToCloud()}
+                          disabled={!cloudState.user || cloudState.isSyncing}
+                        >
+                          {cloudState.isSyncing ? 'Syncing...' : 'Sync now'}
+                        </button>
+                      </div>
+
+                      <div className="password-stack">
+                        <div className="password-panel-head">
+                          <div>
+                            <span className="eyebrow">{cloudState.recoveryMode ? 'RESET PASSWORD' : 'PASSWORD'}</span>
+                            <strong>{cloudState.recoveryMode ? 'Finish recovery on this device' : 'Refresh password safely'}</strong>
+                          </div>
+                          {cloudState.recoveryMode ? <span className="metric-pill">Step 2</span> : null}
+                        </div>
+
+                        <label className="field">
+                          <span>New password</span>
+                          <input
+                            type={authUi.showNewPassword ? 'text' : 'password'}
+                            value={passwordDraft.nextPassword}
+                            onChange={(event) => updatePasswordDraft('nextPassword', event.target.value)}
+                            placeholder="At least 6 characters"
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span>Confirm new password</span>
+                          <input
+                            type={authUi.showNewPassword ? 'text' : 'password'}
+                            value={passwordDraft.confirmPassword}
+                            onChange={(event) => updatePasswordDraft('confirmPassword', event.target.value)}
+                            placeholder="Repeat new password"
+                          />
+                        </label>
+
+                        <label className="field">
+                          <span>Email code</span>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={passwordDraft.reauthCode}
+                            onChange={(event) => updatePasswordDraft('reauthCode', event.target.value.replace(/\s+/g, ''))}
+                            placeholder="Optional: paste code only if Supabase asks"
+                          />
+                        </label>
+
+                        <p className="sync-copy">If Secure password change is enabled in Supabase, send a code to your inbox and paste it here before retrying.</p>
+
+                        <div className="sync-actions">
+                          <button
+                            type="button"
+                            className="ghost-button"
+                            onClick={() => updateAuthUi('showNewPassword', !authUi.showNewPassword)}
+                          >
+                            {authUi.showNewPassword ? 'Hide password' : 'Show password'}
+                          </button>
+
+                          <button
+                            type="button"
+                            className="ghost-button"
+                            onClick={sendPasswordCode}
+                            disabled={cloudState.isSendingReauth}
+                          >
+                            {cloudState.isSendingReauth ? 'Sending code...' : 'Email code'}
+                          </button>
+
+                          <button
+                            type="button"
+                            className="ghost-button"
+                            onClick={changeAccountPassword}
+                            disabled={cloudState.isUpdatingPassword}
+                          >
+                            {cloudState.isUpdatingPassword
+                              ? cloudState.recoveryMode ? 'Finishing reset...' : 'Updating password...'
+                              : cloudState.recoveryMode ? 'Finish reset' : 'Update password'}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="sync-actions">
+                        <button
+                          type="button"
+                          className="ghost-button"
+                          onClick={restoreSnapshotFromCloud}
+                          disabled={!cloudState.user || cloudState.isRestoring}
+                        >
+                          {cloudState.isRestoring ? 'Restoring...' : 'Restore backup'}
+                        </button>
+
+                        <button
+                          type="button"
+                          className="ghost-danger"
+                          onClick={disconnectCloud}
+                          disabled={!cloudState.user}
+                        >
+                          Sign out
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  <div className="sync-note-card">
+                    <strong>What syncs to cloud</strong>
+                    <p>Habits, day history, calories, sleep, journal, profile preferences, and meal captures with private photo storage.</p>
+                  </div>
+
+                  {shouldShowPlainNotice ? <p className="notice-copy">{cloudState.notice}</p> : null}
+                  {!shouldShowConfirmationBanner && cloudState.error ? <p className="analysis-error">{cloudState.error}</p> : null}
+                </div>
+              </section>
+            ) : null}
+
+            {activeSettingsSection === 'app' ? (
+              <section className="section-card">
+                <div className="section-head">
+                  <div>
+                    <span className="eyebrow">НАСТРОЙКИ ПРИЛОЖЕНИЯ</span>
+                    <h2>Interface feel</h2>
+                  </div>
+                  <span className="metric-pill">Saved locally</span>
+                </div>
+
+                <div className="settings-stack">
+                  {APP_SETTINGS.map((setting) => (
+                    <SettingToggle
+                      key={setting.key}
+                      label={setting.label}
+                      description={setting.description}
+                      checked={state.preferences.app[setting.key]}
+                      onToggle={() => togglePreference(setting.section, setting.key)}
+                    />
+                  ))}
+                </div>
+
+                <StateCard
+                  compact
+                  tone="neutral"
+                  icon="phone_iphone"
+                  eyebrow="IPHONE FEEL"
+                  title="The app should feel calm, quick and easy to return to"
+                  body="Short loops, less clutter, visible wins and lighter animation help the interface stay usable every day."
+                />
+
+                <div className="profile-sheet-actions is-secondary">
+                  <button type="button" className="ghost-danger" onClick={resetEverything}>Reset app</button>
+                </div>
+              </section>
+            ) : null}
+
+            {activeSettingsSection === 'about' ? (
+              <section className="section-card">
+                <div className="section-head">
+                  <div>
+                    <span className="eyebrow">ABOUT US</span>
+                    <h2>Why Momentum exists</h2>
+                  </div>
+                  <span className="metric-pill">Mission</span>
+                </div>
+
+                <StateCard
+                  compact
+                  tone="neutral"
+                  icon="favorite"
+                  eyebrow="MOMENTUM"
+                  title="We want nutrition and habits to feel light, not punishing"
+                  body="The product direction is simple: lower friction, calmer design, smarter food guidance and better consistency on iPhone."
+                />
+
+                <div className="insight-stack">
+                  <article className="insight-line">
+                    <strong>Less shame, more rhythm</strong>
+                    <p>We optimize for return-friendly behaviour so missing a day never feels like failure.</p>
+                  </article>
+
+                  <article className="insight-line">
+                    <strong>AI should reduce effort</strong>
+                    <p>Camera, voice and natural language parsing should make food logging easier, not more technical.</p>
+                  </article>
+
+                  <article className="insight-line">
+                    <strong>Mobile-first clarity</strong>
+                    <p>Each screen is designed to feel focused on iPhone instead of cramming desktop ideas into a small display.</p>
+                  </article>
+                </div>
+              </section>
+            ) : null}
+
+            {activeSettingsSection === 'subscriptions' ? (
+              <section className="section-card">
+                <div className="section-head">
+                  <div>
+                    <span className="eyebrow">ПОДПИСКИ</span>
+                    <h2>Pro layer</h2>
+                  </div>
+                  <span className="metric-pill">Coming next</span>
+                </div>
+
+                <StateCard
+                  compact
+                  tone="warm"
+                  icon="workspace_premium"
+                  eyebrow="FREE PLAN"
+                  title="Core tracking is already live"
+                  body="Subscriptions will later unlock deeper AI nutrition, native Health sync, advanced insights and premium coaching loops."
+                />
+
+                <div className="insight-stack">
+                  <article className="insight-line">
+                    <strong>AI nutrition pro</strong>
+                    <p>Richer food analysis, stronger macro suggestions and smarter prompts for fixing the day.</p>
+                  </article>
+
+                  <article className="insight-line">
+                    <strong>Native iPhone layer</strong>
+                    <p>Health sync, better camera and mic integration, and more private device-native experiences.</p>
+                  </article>
+
+                  <article className="insight-line">
+                    <strong>Premium coaching loop</strong>
+                    <p>Actionable nudges, better weekly interpretation and more adaptive habit and meal suggestions.</p>
+                  </article>
+                </div>
+              </section>
+            ) : null}
+          </section>
+        ) : null}
+
         {activeTab === 'insights' ? (
           <section className="tab-view">
             <section className="hero-panel">
@@ -3159,342 +3627,6 @@ export default function App() {
                 <strong>{topHabit ? topHabit.icon : '—'}</strong>
                 <p>{topHabit ? topHabit.name : 'No leader yet'}</p>
               </article>
-            </section>
-
-            <section className="section-card">
-              <div className="section-head">
-                <div>
-                  <span className="eyebrow">ACCOUNT</span>
-                  <h2>Identity, sync, profile</h2>
-                </div>
-                <span className="status-badge">{cloudStatusLabel}</span>
-              </div>
-
-              <div className="sync-shell">
-                {shouldShowConfirmationBanner ? (
-                  <StateCard
-                    tone="warm"
-                    icon="mark_email_unread"
-                    eyebrow="CONFIRM EMAIL"
-                    title="One inbox tap finishes setup"
-                    body="Supabase is waiting for email confirmation before password sign-in can fully unlock."
-                    actionLabel={cloudState.isResendingConfirmation ? 'Sending email...' : 'Resend confirmation'}
-                    onAction={resendConfirmationEmail}
-                    actionDisabled={cloudState.isResendingConfirmation}
-                  />
-                ) : null}
-
-                {shouldShowRecoveryBanner ? (
-                  <StateCard
-                    tone="neutral"
-                    icon="password"
-                    eyebrow="RECOVERY SENT"
-                    title="Check your inbox on iPhone"
-                    body="Open the secure recovery link from your email. This app will switch into reset mode automatically."
-                  />
-                ) : null}
-
-                {shouldShowSuccessBanner ? (
-                  <StateCard
-                    tone="success"
-                    icon="check_circle"
-                    eyebrow="ACCOUNT READY"
-                    title="Identity and sync are live"
-                    body="You are back in. Cloud backup, meals and account settings can keep moving across devices."
-                  />
-                ) : null}
-
-                {cloudState.recoveryMode ? (
-                  <StateCard
-                    tone="warm"
-                    icon="shield_lock"
-                    eyebrow="STEP 2"
-                    title="Finish password reset here"
-                    body="This tab is already holding your recovery session. Set the new password below and the app will close the loop."
-                  />
-                ) : null}
-
-                {!cloudState.user ? (
-                  <>
-                    <div className="auth-mode-row">
-                      <button
-                        type="button"
-                        className={['segment-button', authDraft.mode === 'signin' ? 'is-active' : ''].filter(Boolean).join(' ')}
-                        onClick={() => updateAuthDraft('mode', 'signin')}
-                      >
-                        Sign in
-                      </button>
-                      <button
-                        type="button"
-                        className={['segment-button', authDraft.mode === 'signup' ? 'is-active' : ''].filter(Boolean).join(' ')}
-                        onClick={() => updateAuthDraft('mode', 'signup')}
-                      >
-                        Create account
-                      </button>
-                    </div>
-
-                    {authDraft.mode === 'signup' ? (
-                      <label className="field">
-                        <span>Name</span>
-                        <input
-                          type="text"
-                          value={authDraft.displayName}
-                          onChange={(event) => updateAuthDraft('displayName', event.target.value)}
-                          placeholder="Your name"
-                        />
-                      </label>
-                    ) : null}
-
-                    <label className="field">
-                      <span>Email</span>
-                      <input
-                        type="email"
-                        value={authDraft.email}
-                        onChange={(event) => updateAuthDraft('email', event.target.value)}
-                        placeholder="you@example.com"
-                        disabled={!cloudState.configured}
-                      />
-                    </label>
-
-                    <label className="field">
-                      <span>Password</span>
-                      <input
-                        type={authUi.showAuthPassword ? 'text' : 'password'}
-                        value={authDraft.password}
-                        onChange={(event) => updateAuthDraft('password', event.target.value)}
-                        placeholder="At least 6 characters"
-                        disabled={!cloudState.configured}
-                      />
-                    </label>
-
-                    <p className="sync-copy">{cloudStatusText}</p>
-
-                    <div className="sync-actions">
-                      <button
-                        type="button"
-                        className="ghost-button"
-                        onClick={() => updateAuthUi('showAuthPassword', !authUi.showAuthPassword)}
-                        disabled={!cloudState.configured}
-                      >
-                        {authUi.showAuthPassword ? 'Hide password' : 'Show password'}
-                      </button>
-
-                      <button
-                        type="button"
-                        className="primary-button"
-                        onClick={() => handlePasswordAuth(authDraft.mode)}
-                        disabled={!cloudState.configured || cloudState.isAuthenticating}
-                      >
-                        {cloudState.isAuthenticating
-                          ? authDraft.mode === 'signup' ? 'Creating account...' : 'Signing in...'
-                          : authDraft.mode === 'signup' ? 'Create account' : 'Sign in'}
-                      </button>
-                    </div>
-
-                    <div className="auth-link-row">
-                      <button
-                        type="button"
-                        className="text-link-button"
-                        onClick={sendRecoveryEmail}
-                        disabled={!cloudState.configured || cloudState.isSendingRecoveryEmail}
-                      >
-                        {cloudState.isSendingRecoveryEmail ? 'Sending recovery...' : 'Forgot password'}
-                      </button>
-
-                      <button
-                        type="button"
-                        className="text-link-button"
-                        onClick={resendConfirmationEmail}
-                        disabled={!cloudState.configured || cloudState.isResendingConfirmation}
-                      >
-                        {cloudState.isResendingConfirmation ? 'Sending email...' : 'Resend confirmation'}
-                      </button>
-                    </div>
-
-                    <div className="account-helper-card">
-                      <strong>{authDraft.mode === 'signup' ? 'Why create an account' : 'Why sign in'}</strong>
-                      <p>Sync habits, calories, sleep, journal and meal history across devices. Your food photos stay in private Supabase storage.</p>
-                      <small className="helper-note">
-                        {authDraft.mode === 'signup'
-                          ? 'If email confirmation is enabled in Supabase, one inbox tap finishes setup.'
-                          : 'Forgot password sends a secure recovery link back to this same screen.'}
-                      </small>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    {cloudState.recoveryMode ? (
-                      <div className="recovery-card">
-                        <div>
-                          <span className="eyebrow">PASSWORD RECOVERY</span>
-                          <h3>Choose a new password</h3>
-                          <p>This secure email link already recognized your account. Finish the reset below, then sync keeps working normally.</p>
-                        </div>
-                        <span className="metric-pill">Secure link</span>
-                      </div>
-                    ) : null}
-
-                    <div className="account-summary-card">
-                      <div>
-                        <span className="eyebrow">{cloudState.recoveryMode ? 'ALMOST THERE' : 'SIGNED IN'}</span>
-                        <h3>{accountDraft.displayName || cloudState.profile?.display_name || profileName}</h3>
-                        <p>{cloudUserEmail}</p>
-                      </div>
-                      <span className="metric-pill">{cloudStatusText}</span>
-                    </div>
-
-                    <div className="account-stat-grid">
-                      {accountStats.map((item) => (
-                        <article key={item.label} className="account-stat-card">
-                          <span>{item.label}</span>
-                          <strong>{item.value}</strong>
-                        </article>
-                      ))}
-                    </div>
-
-                    <label className="field">
-                      <span>Display name</span>
-                      <input
-                        type="text"
-                        value={accountDraft.displayName}
-                        onChange={(event) => updateAccountDraft('displayName', event.target.value)}
-                        placeholder="Display name"
-                      />
-                    </label>
-
-                    <label className="field">
-                      <span>Intention</span>
-                      <input
-                        type="text"
-                        value={accountDraft.intention}
-                        onChange={(event) => updateAccountDraft('intention', event.target.value)}
-                        placeholder="Calm energy, lean routine, better sleep"
-                      />
-                    </label>
-
-                    <div className="sync-actions">
-                      <button
-                        type="button"
-                        className="primary-button"
-                        onClick={saveAccountProfile}
-                        disabled={cloudState.isSavingProfile}
-                      >
-                        {cloudState.isSavingProfile ? 'Saving profile...' : 'Save profile'}
-                      </button>
-
-                      <button
-                        type="button"
-                        className="ghost-button"
-                        onClick={() => syncSnapshotToCloud()}
-                        disabled={!cloudState.user || cloudState.isSyncing}
-                      >
-                        {cloudState.isSyncing ? 'Syncing...' : 'Sync now'}
-                      </button>
-                    </div>
-
-                    <div className="password-stack">
-                      <div className="password-panel-head">
-                        <div>
-                          <span className="eyebrow">{cloudState.recoveryMode ? 'RESET PASSWORD' : 'PASSWORD'}</span>
-                          <strong>{cloudState.recoveryMode ? 'Finish recovery on this device' : 'Refresh password safely'}</strong>
-                        </div>
-                        {cloudState.recoveryMode ? <span className="metric-pill">Step 2</span> : null}
-                      </div>
-
-                      <label className="field">
-                        <span>New password</span>
-                        <input
-                          type={authUi.showNewPassword ? 'text' : 'password'}
-                          value={passwordDraft.nextPassword}
-                          onChange={(event) => updatePasswordDraft('nextPassword', event.target.value)}
-                          placeholder="At least 6 characters"
-                        />
-                      </label>
-
-                      <label className="field">
-                        <span>Confirm new password</span>
-                        <input
-                          type={authUi.showNewPassword ? 'text' : 'password'}
-                          value={passwordDraft.confirmPassword}
-                          onChange={(event) => updatePasswordDraft('confirmPassword', event.target.value)}
-                          placeholder="Repeat new password"
-                        />
-                      </label>
-
-                      <label className="field">
-                        <span>Email code</span>
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          value={passwordDraft.reauthCode}
-                          onChange={(event) => updatePasswordDraft('reauthCode', event.target.value.replace(/\s+/g, ''))}
-                          placeholder="Optional: paste code only if Supabase asks"
-                        />
-                      </label>
-
-                      <p className="sync-copy">If Secure password change is enabled in Supabase, send a code to your inbox and paste it here before retrying.</p>
-
-                      <div className="sync-actions">
-                        <button
-                          type="button"
-                          className="ghost-button"
-                          onClick={() => updateAuthUi('showNewPassword', !authUi.showNewPassword)}
-                        >
-                          {authUi.showNewPassword ? 'Hide password' : 'Show password'}
-                        </button>
-
-                        <button
-                          type="button"
-                          className="ghost-button"
-                          onClick={sendPasswordCode}
-                          disabled={cloudState.isSendingReauth}
-                        >
-                          {cloudState.isSendingReauth ? 'Sending code...' : 'Email code'}
-                        </button>
-
-                        <button
-                          type="button"
-                          className="ghost-button"
-                          onClick={changeAccountPassword}
-                          disabled={cloudState.isUpdatingPassword}
-                        >
-                          {cloudState.isUpdatingPassword
-                            ? cloudState.recoveryMode ? 'Finishing reset...' : 'Updating password...'
-                            : cloudState.recoveryMode ? 'Finish reset' : 'Update password'}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="sync-actions">
-                      <button
-                        type="button"
-                        className="ghost-button"
-                        onClick={restoreSnapshotFromCloud}
-                        disabled={!cloudState.user || cloudState.isRestoring}
-                      >
-                        {cloudState.isRestoring ? 'Restoring...' : 'Restore backup'}
-                      </button>
-
-                      <button
-                        type="button"
-                        className="ghost-danger"
-                        onClick={disconnectCloud}
-                        disabled={!cloudState.user}
-                      >
-                        Sign out
-                      </button>
-                    </div>
-                  </>
-                )}
-
-                <div className="sync-note-card">
-                  <strong>What syncs to cloud</strong>
-                  <p>Habits, day history, calories, sleep, journal, profile preferences, and meal captures with private photo storage.</p>
-                </div>
-
-                {shouldShowPlainNotice ? <p className="notice-copy">{cloudState.notice}</p> : null}
-                {!shouldShowConfirmationBanner && cloudState.error ? <p className="analysis-error">{cloudState.error}</p> : null}
-              </div>
             </section>
 
             <section className="section-card">
